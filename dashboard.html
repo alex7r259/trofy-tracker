@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Трофи-Рейд</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600;700;800&family=Share+Tech+Mono&display=swap');
+:root{--bg:#0c1018;--pn:#111820;--pn2:#182028;--bd:#253040;--bdh:#3a5060;--tx:#d0dce8;--dm:#607888;--grn:#00e676;--red:#ff3d5a;--red2:#ff3d5a25;--amb:#ffab00;--blu:#29b6f6;--cyn:#00e5ff;--pur:#b388ff}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--tx);font-family:'Share Tech Mono',monospace;height:100vh;height:100dvh;overflow:hidden;display:flex;flex-direction:column}
+button{font-family:inherit;cursor:pointer;border:none;outline:none}
+input,select,textarea{font-family:inherit;background:var(--pn2);border:1px solid var(--bd);border-radius:6px;color:var(--tx);padding:9px 10px;font-size:13px;width:100%}
+input:focus,select:focus{border-color:var(--grn);outline:none}
+.hdr{background:var(--pn);border-bottom:1px solid var(--bd);padding:9px 14px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;z-index:200}
+.hdr h1{font-family:'Oxanium',sans-serif;font-weight:800;font-size:15px;letter-spacing:2px;color:var(--grn)}
+.hdr-r{display:flex;gap:12px;align-items:center;font-size:10px;color:var(--dm)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:3px;animation:pls 2s infinite}
+.dot.ok{background:var(--grn);box-shadow:0 0 8px var(--grn)}.dot.err{background:var(--red);box-shadow:0 0 8px var(--red)}
+@keyframes pls{0%,100%{opacity:1}50%{opacity:.3}}
+#map{flex:1;z-index:1}
+.leaflet-container{background:#1a2636!important}
+.leaflet-control-zoom a{background:var(--pn)!important;color:var(--tx)!important;border-color:var(--bd)!important}
+.n-tip{background:var(--pn)!important;border:1px solid var(--bd)!important;font-family:'Oxanium'!important;font-weight:700!important;font-size:10px!important;padding:2px 6px!important;border-radius:4px!important;box-shadow:0 2px 8px rgba(0,0,0,.6)!important}
+.n-tip::before{border-top-color:var(--bd)!important}
+.cp-icon{background:none!important;border:none!important}
+.cp-lbl{font-family:'Oxanium',sans-serif;font-weight:700;font-size:9px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.9);width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+.cp-lbl.base{width:28px;height:28px;font-size:10px;border-width:3px}
+.bnav{background:var(--pn);border-top:1px solid var(--bd);display:flex;flex-shrink:0;z-index:200}
+.bnav button{flex:1;padding:8px 0 6px;background:none;color:var(--dm);font-size:8px;text-transform:uppercase;letter-spacing:.5px;display:flex;flex-direction:column;align-items:center;gap:2px;transition:color .15s}
+.bnav button.act{color:var(--grn)}
+.bnav svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.panel{position:fixed;left:0;right:0;bottom:0;top:44px;background:var(--bg);z-index:50;transform:translateY(100%);transition:transform .25s ease;overflow-y:auto;padding:12px 12px 80px;display:none}
+.panel.open{transform:translateY(0);display:block}
+.pt{font-family:'Oxanium',sans-serif;font-size:11px;font-weight:700;color:var(--dm);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.pt button{background:var(--grn);color:var(--bg);padding:5px 14px;border-radius:5px;font-size:10px;font-weight:700;letter-spacing:1px;font-family:'Oxanium',sans-serif}
+.pt .btn-s{background:var(--pn2);color:var(--dm);border:1px solid var(--bd);margin-left:4px}
+.card{background:var(--pn);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-bottom:8px;position:relative;overflow:hidden;transition:border-color .2s}
+.card:active{border-color:var(--bdh)}
+.card-bar{position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:10px 0 0 10px}
+.card.sos{border-color:var(--red);animation:sos 1s infinite}
+@keyframes sos{50%{background:var(--red2)}}
+.nl-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
+.nl-num{font-family:'Oxanium',sans-serif;font-weight:800;font-size:17px}
+.nl-crew{font-size:11px;color:var(--dm)}
+.nl-car{font-size:10px;color:var(--dm);font-style:italic;margin-top:1px}
+.nl-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-top:6px;font-size:9px}
+.nl-stats span{background:var(--pn2);border-radius:4px;padding:4px;text-align:center}
+.nl-stats .k{color:var(--dm);font-size:8px}.nl-stats .v{font-weight:700}
+.age-ok{color:var(--grn)}.age-w{color:var(--amb)}.age-d{color:var(--red)}
+.nl-cp{margin-top:5px;font-size:9px;color:var(--cyn)}
+.nl-cp-bar{height:3px;background:var(--bd);border-radius:2px;margin-top:3px;overflow:hidden}
+.nl-cp-fill{height:100%;border-radius:2px;transition:width .3s}
+.det-hdr{text-align:center;padding:8px 0 12px}
+.det-num{font-family:'Oxanium';font-weight:800;font-size:32px}
+.det-crew{font-size:12px;color:var(--dm);margin-top:3px}
+.det-car{font-size:11px;color:var(--dm)}
+.det-g{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px}
+.det-c{background:var(--pn);border:1px solid var(--bd);border-radius:8px;padding:9px;text-align:center}
+.det-c .k{font-size:8px;color:var(--dm);text-transform:uppercase;letter-spacing:.5px}
+.det-c .v{font-size:17px;font-weight:700;margin-top:2px}
+.det-cp-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--bd)}
+.det-cp-row:last-child{border-bottom:none}
+.form-g{margin-bottom:10px}
+.form-g label{display:block;font-size:10px;color:var(--dm);margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.form-r{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn{padding:10px;border-radius:6px;font-weight:700;letter-spacing:1px;font-size:11px;width:100%;text-transform:uppercase;font-family:'Oxanium',sans-serif}
+.btn-g{background:var(--grn);color:var(--bg)}.btn-r{background:var(--red);color:#fff}.btn-d{background:var(--pn2);color:var(--dm);border:1px solid var(--bd)}
+.cp-card{background:var(--pn);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px}
+.cp-card:active{border-color:var(--bdh)}
+.cp-badge{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Oxanium';font-weight:800;font-size:10px;color:#fff;flex-shrink:0;border:2px solid rgba(255,255,255,.3)}
+.cp-info{flex:1}.cp-info .name{font-size:12px;font-weight:600}.cp-info .meta{font-size:9px;color:var(--dm);margin-top:2px}
+.cp-cats-t{font-size:9px;color:var(--cyn);margin-top:2px}
+.cp-actions{display:flex;gap:4px}
+.cp-actions button{background:none;padding:4px 6px;font-size:14px;border-radius:4px}
+.set-s{margin-bottom:18px}
+.set-s h3{font-family:'Oxanium';font-size:11px;color:var(--dm);margin-bottom:8px;letter-spacing:1px;text-transform:uppercase}
+.cat-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;padding:6px 8px;background:var(--pn);border-radius:6px;border:1px solid var(--bd)}
+.cat-dot{width:14px;height:14px;border-radius:4px;flex-shrink:0}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:300;display:none;align-items:flex-end;justify-content:center}
+.modal-bg.show{display:flex}
+.modal{background:var(--pn);border:1px solid var(--bd);border-radius:14px 14px 0 0;padding:20px 16px 32px;width:100%;max-width:480px;max-height:88vh;overflow-y:auto}
+.modal h2{font-family:'Oxanium';font-size:14px;color:var(--grn);margin-bottom:14px;letter-spacing:1px}
+.modal .handle{width:40px;height:4px;background:var(--bd);border-radius:2px;margin:0 auto 14px}
+.gpx-preview{background:var(--pn2);border:1px solid var(--bd);border-radius:6px;padding:8px;margin:8px 0;max-height:200px;overflow-y:auto;font-size:10px}
+.gpx-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--bd)}
+.gpx-row:last-child{border-bottom:none}
+.gpx-row input{width:50px;padding:4px;text-align:center;font-size:11px}
+.score-tbl{width:100%;border-collapse:collapse;font-size:11px;margin-top:8px}
+.score-tbl th{text-align:left;padding:6px 8px;color:var(--dm);font-size:9px;text-transform:uppercase;border-bottom:1px solid var(--bd)}
+.score-tbl td{padding:6px 8px;border-bottom:1px solid var(--bd)}
+.score-tbl tr:nth-child(1) td{color:var(--grn);font-weight:700}
+.score-tbl tr:nth-child(2) td{color:var(--blu)}
+.score-tbl tr:nth-child(3) td{color:var(--amb)}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>ТРОФИ-РЕЙД</h1><div class="hdr-r"><span><span class="dot" id="c-dot"></span><span id="c-st">---</span></span><span id="clock">--:--</span></div></div>
+<div id="map"></div>
+<div class="bnav">
+<button id="tab-map" class="act" onclick="showTab('map')"><svg viewBox="0 0 24 24"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16m8-12v16"/></svg>Карта</button>
+<button id="tab-list" onclick="showTab('list')"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>Экипажи</button>
+<button id="tab-cp" onclick="showTab('cp')"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Точки</button>
+<button id="tab-scores" onclick="showTab('scores')"><svg viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>Очки</button>
+<button id="tab-set" onclick="showTab('set')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-3.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Настр.</button>
+</div>
+<div class="panel" id="p-list"><div class="pt">Экипажи <button onclick="openPF()">+ Добавить</button></div><div id="pl"></div></div>
+<div class="panel" id="p-cp"><div class="pt"><span>Контрольные точки</span><span><button onclick="openCF()">+ Добавить</button><button class="btn-s" onclick="document.getElementById('gpx-file').click()">GPX</button><input type="file" id="gpx-file" accept=".gpx" style="display:none" onchange="loadGPX(event)"></span></div><div id="cl"></div></div>
+<div class="panel" id="p-scores"><div class="pt">Таблица очков</div><div id="scores-body"></div></div>
+<div class="panel" id="p-set"></div>
+<div class="panel" id="p-detail"></div>
+<!-- Участник -->
+<div class="modal-bg" id="m-p"><div class="modal"><div class="handle"></div><h2 id="mp-t">Новый экипаж</h2>
+<input type="hidden" id="mp-i" value="-1">
+<div class="form-r"><div class="form-g"><label>ID устройства</label><input id="mp-dev" type="number" placeholder="1"></div>
+<div class="form-g"><label>Стартовый №</label><input id="mp-num" type="number" placeholder="101"></div></div>
+<div class="form-r"><div class="form-g"><label>Пилот</label><input id="mp-pil" placeholder="Иванов Иван"></div>
+<div class="form-g"><label>Штурман</label><input id="mp-nav" placeholder="Петров Пётр"></div></div>
+<div class="form-g"><label>Автомобиль</label><input id="mp-car" placeholder="Toyota LC80"></div>
+<div class="form-g"><label>Категория</label><select id="mp-cat"></select></div>
+<div class="form-r" style="margin-top:14px;gap:8px"><button class="btn btn-g" onclick="saveP()">Сохранить</button><button class="btn btn-d" onclick="closeM('m-p')">Отмена</button></div>
+<div id="mp-del" style="margin-top:10px;display:none"><button class="btn btn-r" onclick="delP()">Удалить экипаж</button></div>
+</div></div>
+<!-- Точка -->
+<div class="modal-bg" id="m-c"><div class="modal"><div class="handle"></div><h2 id="mc-t">Новая точка</h2>
+<input type="hidden" id="mc-id" value="">
+<div class="form-r"><div class="form-g"><label>Название</label><input id="mc-name" placeholder="КТ-1"></div>
+<div class="form-g"><label>Баллы</label><input id="mc-pts" type="number" value="10"></div></div>
+<div class="form-r"><div class="form-g"><label>Широта</label><input id="mc-lat" placeholder="49.452134"></div>
+<div class="form-g"><label>Долгота</label><input id="mc-lon" placeholder="11.076852"></div></div>
+<div class="form-r"><div class="form-g"><label>Радиус (м)</label><input id="mc-rad" type="number" value="50"></div>
+<div class="form-g"><label>Тип</label><select id="mc-type"><option value="cp">Контрольная точка</option><option value="base">Базовый лагерь</option><option value="start">Старт</option><option value="finish">Финиш</option></select></div></div>
+<div class="form-g"><label>Категории</label><div id="mc-cats"></div></div>
+<div style="font-size:10px;color:var(--dm);margin:6px 0">Нажмите на карту чтобы указать координаты</div>
+<div class="form-r" style="margin-top:10px;gap:8px"><button class="btn btn-g" onclick="saveC()">Сохранить</button><button class="btn btn-d" onclick="closeM('m-c')">Отмена</button></div>
+<div id="mc-del" style="margin-top:10px;display:none"><button class="btn btn-r" onclick="delC()">Удалить точку</button></div>
+</div></div>
+<!-- Детали КТ -->
+<div class="modal-bg" id="m-cpd"><div class="modal"><div class="handle"></div><div id="cpd-b"></div>
+<button class="btn btn-d" style="margin-top:12px" onclick="closeM('m-cpd')">Закрыть</button></div></div>
+<!-- GPX импорт -->
+<div class="modal-bg" id="m-gpx"><div class="modal"><div class="handle"></div><h2>Импорт точек из GPX</h2>
+<div style="font-size:11px;color:var(--dm);margin-bottom:8px">Найдено точек: <span id="gpx-cnt">0</span></div>
+<div class="form-r" style="margin-bottom:8px"><div class="form-g"><label>Баллы (все)</label><input id="gpx-pts-all" type="number" value="10" onchange="gpxSetAll()"></div>
+<div class="form-g"><label>Радиус (все, м)</label><input id="gpx-rad-all" type="number" value="50" onchange="gpxSetAll()"></div></div>
+<div class="form-g"><label>Категории</label><div id="gpx-cats"></div></div>
+<div class="gpx-preview" id="gpx-list"></div>
+<div class="form-r" style="margin-top:10px;gap:8px"><button class="btn btn-g" onclick="importGPXconfirm()">Импортировать</button><button class="btn btn-d" onclick="closeM('m-gpx')">Отмена</button></div>
+</div></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ============ API ============
+var API='';  // will be set to '' (same origin) or 'http://...'
+function api(path,opts){return fetch(API+path,opts).then(function(r){return r.json()})}
+function apiDel(path){return fetch(API+path,{method:'DELETE'}).then(function(r){return r.json()})}
+function apiPost(path,data){return fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()})}
+
+// ============ STATE ============
+var COL=['#00e676','#29b6f6','#ffab00','#ff3d5a','#b388ff','#00e5ff','#ff6e40','#69f0ae','#40c4ff','#ffd740','#ff5252','#e040fb','#64ffda','#ffab40','#536dfe','#b2ff59','#ff80ab','#84ffff','#ffc400','#ff1744','#7c4dff','#1de9b6','#ff9100','#448aff','#c6ff00','#aeea00'];
+function nc(i){return COL[i%COL.length]}
+var nodes=[],parts=[],cats=[],cps=[],cpLog=[],scores=[];
+var mks={},trails={},cpMks={},cpCirs={};
+var pollN=0,selDev=null,curTab='map';
+
+function catBy(id){return cats.find(function(c){return c.id===id})}
+function partBy(did){return parts.find(function(p){return p.dev_id==did})}
+function cpCol(cp){if(!cp||!cp.cat_ids||!cp.cat_ids.length)return'#ffab00';if(cp.cp_type==='base')return'#ff3d5a';var c=catBy(cp.cat_ids[0]);return c?c.color:'#ffab00'}
+function cpColAll(cp){if(!cp||!cp.cat_ids||!cp.cat_ids.length)return['#ffab00'];return cp.cat_ids.map(function(id){var c=catBy(id);return c?c.color:'#ffab00'})}
+function getScore(did){var s=scores.find(function(x){return x.dev_id==did});return s?s.score:0}
+function getCPpassed(did){var s=scores.find(function(x){return x.dev_id==did});return s?s.cps_passed:0}
+
+// ============ MAP ============
+var map=L.map('map',{zoomControl:true,attributionControl:false}).setView([49.45,11.08],13);
+// Оффлайн тайлы с фоллбэком на OSM онлайн
+L.tileLayer('/tiles/{z}/{x}/{y}.png',{maxZoom:18,errorTileUrl:'https://tile.openstreetmap.org/{z}/{x}/{y}.png'}).addTo(map);
+map.on('click',function(e){if(document.getElementById('m-c').classList.contains('show')){document.getElementById('mc-lat').value=e.latlng.lat.toFixed(7);document.getElementById('mc-lon').value=e.latlng.lng.toFixed(7)}});
+
+// ============ TABS ============
+function showTab(t){curTab=t;['list','cp','set','detail','scores'].forEach(function(p){document.getElementById('p-'+p).classList.remove('open')});
+if(t!=='map')document.getElementById('p-'+t).classList.add('open');
+document.querySelectorAll('.bnav button').forEach(function(b){b.classList.remove('act')});document.getElementById('tab-'+t).classList.add('act');
+if(t==='map'){map.invalidateSize();drawCPs()}if(t==='list')rList();if(t==='cp')rCL();if(t==='set')rSet();if(t==='scores')rScores()}
+
+// ============ POLL ============
+function poll(){
+  Promise.all([api('/api/nodes'),api('/api/participants'),api('/api/categories'),api('/api/checkpoints'),api('/api/scores'),api('/api/cp-log')])
+  .then(function(res){
+    nodes=res[0];parts=res[1];cats=res[2];cps=res[3];scores=res[4];cpLog=res[5];
+    pollN++;document.getElementById('c-dot').className='dot ok';document.getElementById('c-st').textContent='#'+pollN;
+    updateMap();
+    if(curTab==='list')rList();if(curTab==='scores')rScores();if(curTab==='detail'&&selDev!==null)rDet(selDev);
+  }).catch(function(e){document.getElementById('c-dot').className='dot err';document.getElementById('c-st').textContent='ОШБ'})}
+setInterval(poll,2000);
+setTimeout(poll,500);
+
+// ============ MAP UPDATE ============
+function updateMap(){
+  nodes.forEach(function(n){var k='n'+n.id,ll=[n.lat,n.lon],col=nc(n.id),p=partBy(n.id),label=p?'#'+p.num:'#'+n.id;
+  var age=n.age/1000,op=age>120?.3:age>60?.6:1;
+  if(!mks[k]){mks[k]=L.circleMarker(ll,{radius:8,fillColor:col,fillOpacity:op,color:'#fff',weight:2,opacity:op}).addTo(map);
+  mks[k].bindTooltip(label,{permanent:true,direction:'top',offset:[0,-12],className:'n-tip'});mks[k].on('click',function(){openDet(n.id)});
+  trails[k]=L.polyline([],{color:col,weight:2.5,opacity:.5}).addTo(map)}else{mks[k].setLatLng(ll);mks[k].setStyle({fillOpacity:op,opacity:op});mks[k].setTooltipContent(label)}});
+  // Load tracks from server for each node
+  nodes.forEach(function(n){var k='n'+n.id;if(!trails[k])return;
+  api('/api/tracks/'+n.id+'?limit=2000').then(function(tr){if(tr&&tr.length)trails[k].setLatLngs(tr.map(function(p){return[p.lat,p.lon]}))}).catch(function(){})});
+}
+
+function drawCPs(){Object.keys(cpMks).forEach(function(k){map.removeLayer(cpMks[k]);if(Array.isArray(cpCirs[k]))cpCirs[k].forEach(function(c){map.removeLayer(c)});else if(cpCirs[k])map.removeLayer(cpCirs[k])});cpMks={};cpCirs={};
+cps.forEach(function(cp){var col=cpCol(cp),cols=cpColAll(cp),isB=cp.cp_type==='base';
+var ring=cols.length>1?'background:conic-gradient('+cols.map(function(c,i){var s=360/cols.length;return c+' '+(i*s)+'deg '+(i*s+s)+'deg'}).join(',')+')':'background:'+col;
+var icon=L.divIcon({className:'cp-icon',html:'<div class="cp-lbl'+(isB?' base':'')+'" style="'+ring+';border-color:'+col+'">'+(cp.points||0)+'</div>',iconSize:[24,24],iconAnchor:[12,12]});
+cpMks[cp.id]=L.marker([cp.lat,cp.lon],{icon:icon}).addTo(map);cpMks[cp.id].on('click',function(){showCPD(cp.id)});
+cpCirs[cp.id]=[];cols.forEach(function(c,ci){cpCirs[cp.id].push(L.circle([cp.lat,cp.lon],{radius:cp.radius+(ci*2),color:c,fillColor:c,fillOpacity:cols.length>1?.06:.1,weight:1.5,dashArray:'6 4'}).addTo(map))})})}
+
+// ============ CP DETAIL ============
+function showCPD(cpId){var cp=cps.find(function(x){return x.id===cpId});if(!cp)return;var col=cpCol(cp),cols=cpColAll(cp);
+var catNames=cp.cat_ids.map(function(cid){var c=catBy(cid);return c?'<span style="color:'+c.color+'">'+c.name+'</span>':'?'}).join(', ');
+var badgeBg=cols.length>1?'background:conic-gradient('+cols.map(function(c,i){var s=360/cols.length;return c+' '+(i*s)+'deg '+(i*s+s)+'deg'}).join(',')+')':'background:'+col;
+var typeNames={cp:'Контрольная точка',base:'Базовый лагерь',start:'Старт',finish:'Финиш'};
+var h='<div style="text-align:center;margin-bottom:12px">';
+h+='<div style="display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:50%;'+badgeBg+';font-family:Oxanium;font-weight:800;font-size:18px;color:#fff;border:3px solid rgba(255,255,255,.3);margin-bottom:8px">'+(cp.points||0)+'</div>';
+h+='<div style="font-family:Oxanium;font-size:20px;font-weight:700">'+cp.name+'</div>';
+h+='<div style="font-size:12px;color:var(--amb);font-family:Oxanium;font-weight:700;margin-top:2px">'+(cp.points||0)+' баллов</div>';
+h+='<div style="font-size:11px;color:var(--dm);margin-top:2px">'+(typeNames[cp.cp_type]||cp.cp_type)+' — радиус '+cp.radius+' м</div>';
+h+='<div style="font-size:11px;margin-top:4px">'+catNames+'</div>';
+h+='<div style="font-size:10px;color:var(--dm);margin-top:4px">'+cp.lat.toFixed(6)+', '+cp.lon.toFixed(6)+'</div></div>';
+h+='<div style="font-size:10px;color:var(--dm);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Прошли:</div>';
+var any=false;
+cpLog.forEach(function(l){if(l.cp_id!==cpId)return;any=true;var p=partBy(l.dev_id);
+var ts=l.passed_at?l.passed_at.split('T')[1].substring(0,8):'---';
+h+='<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--bd);font-size:11px">';
+h+='<span style="color:'+nc(l.dev_id)+'">'+(p?'#'+p.num+' '+p.pilot:'Dev#'+l.dev_id)+'</span><span style="color:var(--grn)">'+ts+'</span></div>'});
+if(!any)h+='<div style="font-size:11px;color:var(--dm);text-align:center;padding:8px">Ещё никто</div>';
+h+='<button class="btn btn-d" style="margin-top:12px" onclick="closeM(\'m-cpd\');editCP(\''+cpId+'\')">Редактировать</button>';
+document.getElementById('cpd-b').innerHTML=h;document.getElementById('m-cpd').classList.add('show')}
+
+// ============ CREW LIST ============
+function rList(){var el=document.getElementById('pl'),h='';
+var sorted=parts.slice().sort(function(a,b){return getScore(b.dev_id)-getScore(a.dev_id)||a.num-b.num});
+sorted.forEach(function(p){var n=nodes.find(function(x){return x.id==p.dev_id}),col=nc(p.dev_id),cat=catBy(p.cat_id);
+var age=n?Math.floor(n.age/1000):null;
+var ageStr=age===null?'НЕТ СВЯЗИ':age<60?age+'с':Math.floor(age/60)+'м'+('0'+(age%60)).slice(-2)+'с';
+var ageCls=age===null?'age-d':age>120?'age-d':age>60?'age-w':'age-ok';
+var isSos=n&&(n.flags&1),score=getScore(p.dev_id),cpsDone=getCPpassed(p.dev_id);
+var cpTotal=cps.filter(function(cp){return cp.cat_ids.indexOf(p.cat_id)!==-1}).length;
+var cpPct=cpTotal?Math.round(cpsDone/cpTotal*100):0;
+h+='<div class="card'+(isSos?' sos':'')+'" onclick="openDet('+p.dev_id+')">';
+h+='<div class="card-bar" style="background:'+col+'"></div>';
+h+='<div class="nl-head"><span class="nl-num" style="color:'+col+'">#'+p.num+'</span>';
+h+='<span style="color:var(--amb);font-family:Oxanium;font-weight:700;font-size:13px">'+score+' очк.</span></div>';
+h+='<div class="nl-crew">'+p.pilot+(p.navigator?' и '+p.navigator:'')+'<span class="'+ageCls+'" style="margin-left:8px;font-size:10px">'+ageStr+'</span></div>';
+h+='<div class="nl-car">'+p.car+(cat?' <span style="color:'+cat.color+'">'+cat.name+'</span>':'')+'</div>';
+if(n){h+='<div class="nl-stats">';
+h+='<span><span class="k">СКР</span><br><span class="v" style="color:var(--blu)">'+n.speed+'</span></span>';
+h+='<span><span class="k">ВЫС</span><br><span class="v" style="color:var(--pur)">'+n.alt+'</span></span>';
+h+='<span><span class="k">HDOP</span><br><span class="v" style="color:var(--cyn)">'+(n.hdop||0).toFixed(1)+'</span></span>';
+h+='<span><span class="k">БАТ</span><br><span class="v" style="color:'+(n.battery<20?'var(--red)':'var(--grn)')+'">'+n.battery+'%</span></span></div>'}
+if(cpTotal){h+='<div class="nl-cp">КТ: '+cpsDone+'/'+cpTotal+'<div class="nl-cp-bar"><div class="nl-cp-fill" style="width:'+cpPct+'%;background:'+col+'"></div></div></div>'}
+h+='</div>'});
+nodes.forEach(function(n){if(partBy(n.id))return;
+h+='<div class="card" onclick="openDet('+n.id+')"><div class="card-bar" style="background:'+nc(n.id)+'"></div>';
+h+='<div class="nl-head"><span class="nl-num" style="color:'+nc(n.id)+'">DEV#'+n.id+'</span><span class="age-w" style="font-size:10px">не зарегистрирован</span></div>';
+h+='<div class="nl-crew" style="color:var(--amb)">Нажмите чтобы зарегистрировать</div></div>'});
+if(!h)h='<div style="text-align:center;color:var(--dm);padding:30px;font-size:11px">Нет экипажей</div>';
+el.innerHTML=h}
+
+// ============ DETAIL ============
+function openDet(d){selDev=d;rDet(d);showTab('detail');document.getElementById('p-detail').classList.add('open')}
+function rDet(did){var el=document.getElementById('p-detail'),n=nodes.find(function(x){return x.id==did}),p=partBy(did),col=nc(did),cat=p?catBy(p.cat_id):null;
+var h='<div style="display:flex;justify-content:space-between;margin-bottom:10px">';
+h+='<button class="btn btn-d" style="width:auto;padding:6px 14px;font-size:10px" onclick="showTab(\'list\')">← Назад</button><div style="display:flex;gap:6px">';
+if(p)h+='<button class="btn btn-d" style="width:auto;padding:6px 14px;font-size:10px" onclick="editP('+did+')">Изменить</button>';
+else h+='<button class="btn btn-g" style="width:auto;padding:6px 14px;font-size:10px" onclick="openPF('+did+')">Регистрация</button>';
+h+='<button class="btn btn-d" style="width:auto;padding:6px 14px;font-size:10px" onclick="panTo('+did+')">Найти</button></div></div>';
+h+='<div class="det-hdr"><div class="det-num" style="color:'+col+'">'+(p?'#'+p.num:'DEV#'+did)+'</div>';
+if(p){h+='<div class="det-crew">'+p.pilot+(p.navigator?' и '+p.navigator:'')+'</div>';
+h+='<div class="det-car">'+p.car+(cat?' — <span style="color:'+cat.color+'">'+cat.name+'</span>':'')+'</div>';
+h+='<div style="font-family:Oxanium;font-weight:800;font-size:22px;color:var(--amb);margin-top:6px">'+getScore(did)+' очков</div>'}
+h+='</div>';
+if(n){var dirs=['С','СВ','В','ЮВ','Ю','ЮЗ','З','СЗ'],dir=dirs[Math.round((n.heading||0)/45)%8];
+h+='<div class="det-g">';
+h+='<div class="det-c"><div class="k">Широта</div><div class="v" style="color:var(--grn);font-size:14px">'+n.lat.toFixed(6)+'</div></div>';
+h+='<div class="det-c"><div class="k">Долгота</div><div class="v" style="color:var(--grn);font-size:14px">'+n.lon.toFixed(6)+'</div></div>';
+h+='<div class="det-c"><div class="k">Скорость</div><div class="v" style="color:var(--blu)">'+n.speed+' <small>км/ч</small></div></div>';
+h+='<div class="det-c"><div class="k">Курс</div><div class="v" style="color:var(--amb)">'+(n.heading||0)+'° '+dir+'</div></div>';
+h+='<div class="det-c"><div class="k">Высота</div><div class="v" style="color:var(--pur)">'+n.alt+' <small>м</small></div></div>';
+h+='<div class="det-c"><div class="k">HDOP</div><div class="v" style="color:var(--cyn)">'+(n.hdop||0).toFixed(1)+'</div></div>';
+h+='<div class="det-c"><div class="k">Батарея</div><div class="v" style="color:'+(n.battery<20?'var(--red)':'var(--grn)')+'">'+n.battery+'%</div></div>';
+h+='<div class="det-c"><div class="k">Обновл.</div><div class="v">'+Math.floor(n.age/1000)+'<small>с</small></div></div></div>'}
+else h+='<div style="text-align:center;color:var(--dm);padding:20px;font-size:11px">Нет данных</div>';
+if(p){var myCps=cps.filter(function(cp){return cp.cat_ids.indexOf(p.cat_id)!==-1});
+if(myCps.length){h+='<div style="font-size:10px;color:var(--dm);margin-bottom:6px;letter-spacing:1px">КОНТРОЛЬНЫЕ ТОЧКИ</div>';
+myCps.forEach(function(cp){var hit=cpLog.find(function(l){return l.dev_id==did&&l.cp_id===cp.id});
+var ts=hit?hit.passed_at.split('T')[1].substring(0,8):'---';var c=hit?'var(--grn)':'var(--dm)';
+h+='<div class="det-cp-row"><span style="color:'+c+'">'+(hit?'✓ ':'○ ')+cp.name+' <span style="color:var(--amb)">'+(cp.points||0)+'</span></span><span style="color:var(--dm)">'+ts+'</span></div>'})}}
+h+='<button class="btn btn-d" style="margin-top:14px" onclick="window.open(API+\'/api/tracks/'+did+'/gpx\')">Скачать трек GPX</button>';
+el.innerHTML=h}
+function panTo(d){var n=nodes.find(function(x){return x.id==d});if(n){showTab('map');setTimeout(function(){map.setView([n.lat,n.lon],16)},100)}}
+
+// ============ SCORES ============
+function rScores(){var el=document.getElementById('scores-body');
+if(!scores.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px">Нет данных</div>';return}
+// Group by category
+var byCat={};scores.forEach(function(s){var k=s.cat_id||'none';if(!byCat[k])byCat[k]=[];byCat[k].push(s)});
+var h='';
+Object.keys(byCat).forEach(function(catId){
+var cat=catBy(catId);var catName=cat?cat.name:'Без категории';var catColor=cat?cat.color:'var(--dm)';
+h+='<div style="margin-bottom:16px"><div style="font-family:Oxanium;font-size:13px;font-weight:700;color:'+catColor+';margin-bottom:6px">'+catName+'</div>';
+h+='<table class="score-tbl"><tr><th>Место</th><th>№</th><th>Экипаж</th><th>Очки</th><th>КТ</th></tr>';
+var sorted=byCat[catId].sort(function(a,b){return b.score-a.score||a.num-b.num});
+sorted.forEach(function(s,i){
+h+='<tr><td>'+(i+1)+'</td><td style="color:'+nc(s.dev_id)+';font-weight:700">#'+s.num+'</td>';
+h+='<td>'+s.pilot+(s.navigator?' / '+s.navigator:'')+'</td>';
+h+='<td style="font-weight:700;color:var(--amb)">'+s.score+'</td>';
+h+='<td>'+s.cps_passed+'</td></tr>'});
+h+='</table></div>'});
+el.innerHTML=h}
+
+// ============ PARTICIPANT FORM ============
+function openPF(prefill){document.getElementById('mp-i').value='-1';document.getElementById('mp-dev').value=prefill||'';
+document.getElementById('mp-num').value='';document.getElementById('mp-pil').value='';document.getElementById('mp-nav').value='';
+document.getElementById('mp-car').value='';document.getElementById('mp-t').textContent='Новый экипаж';
+document.getElementById('mp-del').style.display='none';fillCS();document.getElementById('m-p').classList.add('show')}
+function editP(d){var p=partBy(d);if(!p)return;
+document.getElementById('mp-i').value=p.dev_id;document.getElementById('mp-dev').value=p.dev_id;document.getElementById('mp-num').value=p.num;
+document.getElementById('mp-pil').value=p.pilot;document.getElementById('mp-nav').value=p.navigator;document.getElementById('mp-car').value=p.car;
+document.getElementById('mp-t').textContent='Экипаж #'+p.num;document.getElementById('mp-del').style.display='block';
+fillCS();document.getElementById('mp-cat').value=p.cat_id;document.getElementById('m-p').classList.add('show')}
+function fillCS(){document.getElementById('mp-cat').innerHTML=cats.map(function(c){return'<option value="'+c.id+'">'+c.name+'</option>'}).join('')}
+function saveP(){var o={dev_id:parseInt(document.getElementById('mp-dev').value),num:parseInt(document.getElementById('mp-num').value),
+pilot:document.getElementById('mp-pil').value.trim(),navigator:document.getElementById('mp-nav').value.trim(),
+car:document.getElementById('mp-car').value.trim(),cat_id:document.getElementById('mp-cat').value};
+if(!o.dev_id||!o.num||!o.pilot)return;
+apiPost('/api/participants',o).then(function(){closeM('m-p');poll()})}
+function delP(){var d=parseInt(document.getElementById('mp-i').value);if(d&&confirm('Удалить экипаж?'))apiDel('/api/participants/'+d).then(function(){closeM('m-p');poll()})}
+
+// ============ CP FORM ============
+function openCF(){document.getElementById('mc-id').value='';document.getElementById('mc-t').textContent='Новая точка';
+document.getElementById('mc-name').value='КТ-'+(cps.length+1);document.getElementById('mc-lat').value='';document.getElementById('mc-lon').value='';
+document.getElementById('mc-rad').value='50';document.getElementById('mc-type').value='cp';document.getElementById('mc-pts').value='10';
+document.getElementById('mc-del').style.display='none';fillCC(null);document.getElementById('m-c').classList.add('show')}
+function editCP(cpId){var cp=cps.find(function(x){return x.id===cpId});if(!cp)return;
+document.getElementById('mc-id').value=cp.id;document.getElementById('mc-t').textContent='Редактировать точку';
+document.getElementById('mc-name').value=cp.name;document.getElementById('mc-lat').value=cp.lat;document.getElementById('mc-lon').value=cp.lon;
+document.getElementById('mc-rad').value=cp.radius;document.getElementById('mc-type').value=cp.cp_type;document.getElementById('mc-pts').value=cp.points||0;
+document.getElementById('mc-del').style.display='block';fillCC(cp.cat_ids);document.getElementById('m-c').classList.add('show')}
+function fillCC(sel){document.getElementById('mc-cats').innerHTML=cats.map(function(c){var chk=sel?sel.indexOf(c.id)!==-1:true;
+return'<label style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px"><input type="checkbox" value="'+c.id+'"'+(chk?' checked':'')+'><span style="color:'+c.color+'">'+c.name+'</span></label>'}).join('')}
+function saveC(){var catIds=[];document.querySelectorAll('#mc-cats input:checked').forEach(function(cb){catIds.push(cb.value)});
+var o={name:document.getElementById('mc-name').value.trim(),lat:parseFloat(document.getElementById('mc-lat').value),
+lon:parseFloat(document.getElementById('mc-lon').value),radius:parseInt(document.getElementById('mc-rad').value)||50,
+cp_type:document.getElementById('mc-type').value,points:parseInt(document.getElementById('mc-pts').value)||0,cat_ids:catIds};
+var id=document.getElementById('mc-id').value;if(id)o.id=id;
+if(!o.name||isNaN(o.lat)||isNaN(o.lon))return;
+apiPost('/api/checkpoints',o).then(function(){closeM('m-c');poll();setTimeout(drawCPs,500)})}
+function delC(){var id=document.getElementById('mc-id').value;if(id&&confirm('Удалить точку?'))apiDel('/api/checkpoints/'+id).then(function(){closeM('m-c');poll();setTimeout(drawCPs,500)})}
+
+function rCL(){var el=document.getElementById('cl'),h='';
+if(!cps.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px;font-size:11px">Точки не добавлены</div>';return}
+cps.forEach(function(cp){var col=cpCol(cp),cols=cpColAll(cp);
+var catNames=cp.cat_ids.map(function(cid){var c=catBy(cid);return c?'<span style="color:'+c.color+'">'+c.name+'</span>':'?'}).join(', ');
+var passed=cpLog.filter(function(l){return l.cp_id===cp.id}).length;
+var badgeBg=cols.length>1?'background:conic-gradient('+cols.map(function(c,i){var s=360/cols.length;return c+' '+(i*s)+'deg '+(i*s+s)+'deg'}).join(',')+')':'background:'+col;
+h+='<div class="cp-card" onclick="showCPD(\''+cp.id+'\')">';
+h+='<div class="cp-badge" style="'+badgeBg+'">'+(cp.points||0)+'</div>';
+h+='<div class="cp-info"><div class="name">'+cp.name+' <span style="color:var(--amb);font-size:10px">'+(cp.points||0)+' б.</span></div>';
+h+='<div class="meta">'+cp.lat.toFixed(5)+', '+cp.lon.toFixed(5)+' / r='+cp.radius+'м</div>';
+h+='<div class="cp-cats-t">'+catNames+'</div>';
+if(passed)h+='<div style="font-size:9px;color:var(--grn);margin-top:2px">Прошли: '+passed+'</div>';
+h+='</div><div class="cp-actions">';
+h+='<button style="color:var(--blu)" onclick="event.stopPropagation();editCP(\''+cp.id+'\')">✎</button>';
+h+='<button style="color:var(--red)" onclick="event.stopPropagation();if(confirm(\'Удалить?\')){apiDel(\'/api/checkpoints/'+cp.id+'\').then(function(){poll();setTimeout(drawCPs,500)})}">✕</button>';
+h+='</div></div>'});el.innerHTML=h}
+
+// ============ GPX IMPORT ============
+var gpxWpts=[];
+function loadGPX(ev){var f=ev.target.files[0];if(!f)return;var r=new FileReader();
+r.onload=function(){var parser=new DOMParser(),doc=parser.parseFromString(r.result,'text/xml');gpxWpts=[];
+doc.querySelectorAll('wpt,rtept').forEach(function(w){var n=w.querySelector('name');
+gpxWpts.push({name:n?n.textContent:'КТ-'+(gpxWpts.length+1),lat:parseFloat(w.getAttribute('lat')),lon:parseFloat(w.getAttribute('lon')),pts:10,radius:50})});
+if(!gpxWpts.length){alert('Не найдены точки (wpt/rtept)');return}
+showGPXpreview()};r.readAsText(f);ev.target.value=''}
+function showGPXpreview(){document.getElementById('gpx-cnt').textContent=gpxWpts.length;
+var h='';gpxWpts.forEach(function(w,i){
+h+='<div class="gpx-row"><span style="flex:1">'+w.name+'<br><span style="color:var(--dm)">'+w.lat.toFixed(5)+', '+w.lon.toFixed(5)+'</span></span>';
+h+='<input id="gpx-pts-'+i+'" type="number" value="'+w.pts+'" style="width:45px;margin:0 4px" title="Баллы">';
+h+='<input id="gpx-rad-'+i+'" type="number" value="'+w.radius+'" style="width:50px" title="Радиус м"></div>'});
+document.getElementById('gpx-list').innerHTML=h;
+document.getElementById('gpx-cats').innerHTML=cats.map(function(c){
+return'<label style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px"><input type="checkbox" value="'+c.id+'" checked><span style="color:'+c.color+'">'+c.name+'</span></label>'}).join('');
+document.getElementById('m-gpx').classList.add('show')}
+function gpxSetAll(){var pts=parseInt(document.getElementById('gpx-pts-all').value)||10;
+var rad=parseInt(document.getElementById('gpx-rad-all').value)||50;
+gpxWpts.forEach(function(w,i){document.getElementById('gpx-pts-'+i).value=pts;document.getElementById('gpx-rad-'+i).value=rad})}
+function importGPXconfirm(){var catIds=[];document.querySelectorAll('#gpx-cats input:checked').forEach(function(cb){catIds.push(cb.value)});
+var promises=gpxWpts.map(function(w,i){return apiPost('/api/checkpoints',{name:w.name,lat:w.lat,lon:w.lon,
+radius:parseInt(document.getElementById('gpx-rad-'+i).value)||50,
+points:parseInt(document.getElementById('gpx-pts-'+i).value)||0,cp_type:'cp',cat_ids:catIds})});
+Promise.all(promises).then(function(){closeM('m-gpx');poll();setTimeout(function(){drawCPs();
+if(gpxWpts.length){var bounds=L.latLngBounds(gpxWpts.map(function(w){return[w.lat,w.lon]}));showTab('map');setTimeout(function(){map.fitBounds(bounds,{padding:[30,30]})},200)}},500)})}
+
+// ============ SETTINGS ============
+function rSet(){
+api('/api/status').then(function(st){
+var h='<div class="set-s"><h3>Статус сервера</h3>';
+h+='<div style="font-size:11px;color:var(--dm);line-height:1.8">';
+h+='Шлюз: <span style="color:'+(st.gateway_connected?'var(--grn)':'var(--red)')+'">'+st.gateway_url+' '+(st.gateway_connected?'подключён':'ошибка')+'</span><br>';
+h+='Опросов: '+st.poll_count+'<br>';
+h+='Узлов: '+st.nodes_count+' | Точек трека: '+st.tracks_count+'<br>';
+h+='Тайлы: '+(st.tiles_available?'✓ доступны':'✕ не найдены')+'<br>';
+h+='БД: '+st.db_path+'</div></div>';
+h+='<div class="set-s"><h3>Категории</h3>';
+cats.forEach(function(c){h+='<div class="cat-row"><div class="cat-dot" style="background:'+c.color+'"></div><span style="flex:1;font-size:12px">'+c.name+'</span>';
+h+='<button style="background:none;color:var(--red);font-size:14px;padding:2px 6px" onclick="apiDel(\'/api/categories/'+c.id+'\').then(function(){poll();rSet()})">✕</button></div>'});
+h+='<div style="display:flex;gap:6px;margin-top:6px"><input id="s-nc" placeholder="Новая категория"><input id="s-ncol" type="color" value="#ffab00" style="width:50px;padding:2px"><button class="btn btn-d" style="width:auto;padding:8px 14px;white-space:nowrap" onclick="addCat()">Добавить</button></div></div>';
+h+='<div class="set-s"><h3>Экспорт данных</h3>';
+h+='<button class="btn btn-d" onclick="window.open(API+\'/api/scores\')">Таблица очков (JSON)</button>';
+h+='<button class="btn btn-d" style="margin-top:6px" onclick="window.open(API+\'/api/cp-log\')">Лог КТ (JSON)</button></div>';
+h+='<div class="set-s"><h3>О системе</h3><div style="font-size:10px;color:var(--dm);line-height:1.6">';
+h+='Trophy Raid Server<br>Оффлайн-система трекинга для трофи-рейдов<br>';
+h+='LoRa Mesh + ESP32 + SQLite<br>Сервер: '+window.location.host+'</div></div>';
+document.getElementById('p-set').innerHTML=h}).catch(function(){
+document.getElementById('p-set').innerHTML='<div style="padding:20px;color:var(--red)">Нет связи с сервером</div>'})}
+
+function addCat(){var n=document.getElementById('s-nc').value.trim();if(!n)return;
+var col=document.getElementById('s-ncol').value;
+apiPost('/api/categories',{name:n,color:col}).then(function(){poll();rSet()})}
+
+function closeM(id){document.getElementById(id).classList.remove('show')}
+setInterval(function(){var d=new Date();document.getElementById('clock').textContent=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)},5000);
+document.getElementById('clock').textContent=('0'+new Date().getHours()).slice(-2)+':'+('0'+new Date().getMinutes()).slice(-2);
+</script>
+</body></html>
