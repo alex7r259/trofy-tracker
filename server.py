@@ -328,6 +328,13 @@ class RequestHandler(SimpleHTTPRequestHandler):
     def _read_body(self):
         length = int(self.headers.get('Content-Length', 0))
         return self.rfile.read(length) if length else b''
+
+    @staticmethod
+    def _safe_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
     
     def do_OPTIONS(self):
         self.send_response(200)
@@ -349,8 +356,11 @@ class RequestHandler(SimpleHTTPRequestHandler):
         
         # Тайлы
         if path.startswith('/tiles/'):
-            tile_path = TILE_DIR / path[7:]  # убираем /tiles/
-            if tile_path.exists():
+            # Не допускаем выход из директории тайлов через ../
+            requested = path[7:].lstrip('/')
+            tile_path = (TILE_DIR / requested).resolve()
+            tiles_root = TILE_DIR.resolve()
+            if tiles_root in tile_path.parents and tile_path.suffix == '.png' and tile_path.exists():
                 self._file(tile_path.read_bytes(), 'image/png')
             else:
                 self.send_error(404)
@@ -375,7 +385,10 @@ class RequestHandler(SimpleHTTPRequestHandler):
             return
         
         if path.startswith('/api/node/'):
-            dev_id = int(path.split('/')[-1])
+            dev_id = self._safe_int(path.split('/')[-1])
+            if dev_id is None:
+                self._json({'error': 'invalid dev_id'}, 400)
+                return
             row = self.db.conn.execute('SELECT * FROM nodes WHERE dev_id=?', (dev_id,)).fetchone()
             self._json(dict(row) if row else {'error': 'not found'})
             return
@@ -385,13 +398,19 @@ class RequestHandler(SimpleHTTPRequestHandler):
             return
         
         if path.startswith('/api/tracks/') and path.endswith('/gpx'):
-            dev_id = int(path.split('/')[-2])
+            dev_id = self._safe_int(path.split('/')[-2])
+            if dev_id is None:
+                self._json({'error': 'invalid dev_id'}, 400)
+                return
             gpx, name = self.db.get_track_gpx(dev_id)
             self._file(gpx.encode(), 'application/gpx+xml', f'track-{dev_id}.gpx')
             return
         
         if path.startswith('/api/tracks/'):
-            dev_id = int(path.split('/')[-1])
+            dev_id = self._safe_int(path.split('/')[-1])
+            if dev_id is None:
+                self._json({'error': 'invalid dev_id'}, 400)
+                return
             self._json(self.db.get_track(dev_id))
             return
         
@@ -507,7 +526,10 @@ class RequestHandler(SimpleHTTPRequestHandler):
         path = self.path.split('?')[0]
         
         if path.startswith('/api/participants/'):
-            dev_id = int(path.split('/')[-1])
+            dev_id = self._safe_int(path.split('/')[-1])
+            if dev_id is None:
+                self._json({'error': 'invalid dev_id'}, 400)
+                return
             self.db.conn.execute('DELETE FROM participants WHERE dev_id=?', (dev_id,))
             self.db.commit()
             self._json({'ok': True})
