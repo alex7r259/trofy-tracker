@@ -145,6 +145,7 @@ input:focus,select:focus{border-color:var(--grn);outline:none}
 <input type="hidden" id="mc-id" value="">
 <div class="form-r"><div class="form-g"><label>Название</label><input id="mc-name" placeholder="КТ-1"></div>
 <div class="form-g"><label>Баллы</label><input id="mc-pts" type="number" value="10"></div></div>
+<div class="form-r"><div class="form-g"><label>Радиус (м)</label><input id="mc-rad" type="number" value="50"></div></div>
 <div class="form-r"><div class="form-g"><label>Широта</label><input id="mc-lat" placeholder="49.452134"></div>
 <div class="form-g"><label>Долгота</label><input id="mc-lon" placeholder="11.076852"></div></div>
 <div class="form-r"><div class="form-g"><label>Тип</label><select id="mc-type"><option value="cp">Контрольная точка</option><option value="base">Базовый лагерь</option><option value="start">Старт</option><option value="finish">Финиш</option></select></div></div>
@@ -202,8 +203,9 @@ var mapboxToken='';
 
 function catBy(id){return cats.find(function(c){return c.id===id})}
 function partBy(did){return parts.find(function(p){return p.dev_id==did})}
-function cpCol(cp){if(!cp||!cp.cat_ids||!cp.cat_ids.length)return'#ffab00';if(cp.cp_type==='base')return'#ff3d5a';var c=catBy(cp.cat_ids[0]);return c?c.color:'#ffab00'}
-function cpColAll(cp){if(!cp||!cp.cat_ids||!cp.cat_ids.length)return['#ffab00'];return cp.cat_ids.map(function(id){var c=catBy(id);return c?c.color:'#ffab00'})}
+function cpCatIds(cp){return Array.isArray(cp&&cp.cat_ids)?cp.cat_ids:[]}
+function cpCol(cp){var ids=cpCatIds(cp);if(!ids.length)return'#ffab00';if(cp.cp_type==='base')return'#ff3d5a';var c=catBy(ids[0]);return c?c.color:'#ffab00'}
+function cpColAll(cp){var ids=cpCatIds(cp);if(!ids.length)return['#ffab00'];return ids.map(function(id){var c=catBy(id);return c?c.color:'#ffab00'})}
 function getScore(did){var s=scores.find(function(x){return x.dev_id==did});return s?s.score:0}
 function getCPpassed(did){var s=scores.find(function(x){return x.dev_id==did});return s?s.cps_passed:0}
 
@@ -407,7 +409,7 @@ cpMks[cp.id].on('click',function(){showCPD(cp.id)})})}
 
 // ============ CP DETAIL ============
 function showCPD(cpId){var cp=cps.find(function(x){return x.id===cpId});if(!cp)return;var col=cpCol(cp),cols=cpColAll(cp);
-var catNames=cp.cat_ids.map(function(cid){var c=catBy(cid);return c?'<span style="color:'+c.color+'">'+c.name+'</span>':'?'}).join(', ');
+var catNames=cpCatIds(cp).map(function(cid){var c=catBy(cid);return c?'<span style="color:'+c.color+'">'+c.name+'</span>':'?'}).join(', ');
 var badgeBg=cols.length>1?'background:conic-gradient('+cols.map(function(c,i){var s=360/cols.length;return c+' '+(i*s)+'deg '+(i*s+s)+'deg'}).join(',')+')':'background:'+col;
 var typeNames={cp:'Контрольная точка',base:'Базовый лагерь',start:'Старт',finish:'Финиш'};
 var h='<div style="text-align:center;margin-bottom:12px">';
@@ -474,7 +476,7 @@ h+='<div class="det-c"><div class="k">HDOP</div><div class="v" style="color:var(
 h+='<div class="det-c"><div class="k">Батарея</div><div class="v" style="color:'+(n.battery<20?'var(--red)':'var(--grn)')+'">'+n.battery+'%</div></div>';
 h+='<div class="det-c"><div class="k">Обновл.</div><div class="v">'+Math.floor(n.age/1000)+'<small>с</small></div></div></div>'}
 else h+='<div style="text-align:center;color:var(--dm);padding:20px;font-size:11px">Нет данных</div>';
-if(p){var myCps=cps.filter(function(cp){return cp.cat_ids.indexOf(p.cat_id)!==-1});
+if(p){var myCps=cps.filter(function(cp){return cpCatIds(cp).indexOf(p.cat_id)!==-1});
 if(myCps.length){h+='<div style="font-size:10px;color:var(--dm);margin-bottom:6px;letter-spacing:1px">КОНТРОЛЬНЫЕ ТОЧКИ</div>';
 myCps.forEach(function(cp){var hit=cpLog.find(function(l){return l.dev_id==did&&l.cp_id===cp.id});
 var ts=hit?hit.passed_at.split('T')[1].substring(0,8):'---';var c=hit?'var(--grn)':'var(--dm)';
@@ -505,19 +507,19 @@ function delP(){var d=parseInt(document.getElementById('mp-i').value);if(d&&conf
 // ============ CP FORM ============
 function openCF(){document.getElementById('mc-id').value='';document.getElementById('mc-t').textContent='Новая точка';
 document.getElementById('mc-name').value='КТ-'+(cps.length+1);document.getElementById('mc-lat').value='';document.getElementById('mc-lon').value='';
-document.getElementById('mc-type').value='cp';document.getElementById('mc-pts').value='10';
+document.getElementById('mc-type').value='cp';document.getElementById('mc-pts').value='10';document.getElementById('mc-rad').value='50';
 document.getElementById('mc-del').style.display='none';fillCC(null);document.getElementById('m-c').classList.add('show')}
 function editCP(cpId){var cp=cps.find(function(x){return x.id===cpId});if(!cp)return;
 document.getElementById('mc-id').value=cp.id;document.getElementById('mc-t').textContent='Редактировать точку';
 document.getElementById('mc-name').value=cp.name;document.getElementById('mc-lat').value=cp.lat;document.getElementById('mc-lon').value=cp.lon;
-document.getElementById('mc-type').value=cp.cp_type;document.getElementById('mc-pts').value=cp.points||0;
+document.getElementById('mc-type').value=cp.cp_type;document.getElementById('mc-pts').value=cp.points||0;document.getElementById('mc-rad').value=cp.radius||50;
 document.getElementById('mc-del').style.display='block';fillCC(cp.cat_ids);document.getElementById('m-c').classList.add('show')}
 function fillCC(sel){document.getElementById('mc-cats').innerHTML=cats.map(function(c){var chk=sel?sel.indexOf(c.id)!==-1:true;
 return'<label style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px"><input type="checkbox" value="'+c.id+'"'+(chk?' checked':'')+'><span style="color:'+c.color+'">'+c.name+'</span></label>'}).join('')}
 function saveC(){var catIds=[];document.querySelectorAll('#mc-cats input:checked').forEach(function(cb){catIds.push(cb.value)});
 var o={name:document.getElementById('mc-name').value.trim(),lat:parseFloat(document.getElementById('mc-lat').value),
 lon:parseFloat(document.getElementById('mc-lon').value),
-cp_type:document.getElementById('mc-type').value,points:parseInt(document.getElementById('mc-pts').value)||0,cat_ids:catIds};
+cp_type:document.getElementById('mc-type').value,points:parseInt(document.getElementById('mc-pts').value)||0,radius:parseInt(document.getElementById('mc-rad').value)||50,cat_ids:catIds};
 var id=document.getElementById('mc-id').value;if(id)o.id=id;
 if(!o.name||isNaN(o.lat)||isNaN(o.lon))return;
 apiPost('/api/checkpoints',o).then(function(){closeM('m-c');poll();setTimeout(drawCPs,500)})}
@@ -532,7 +534,7 @@ h+='<div class="info-chip"><div class="k">Взятий КТ</div><div class="v" 
 h+='</div>';
 if(!cps.length){el.innerHTML='<div style="text-align:center;color:var(--dm);padding:30px;font-size:11px">Точки не добавлены</div>';return}
 cps.forEach(function(cp){var col=cpCol(cp),cols=cpColAll(cp);
-var catNames=cp.cat_ids.map(function(cid){var c=catBy(cid);return c?'<span style="color:'+c.color+'">'+c.name+'</span>':'?'}).join(', ');
+var catNames=cpCatIds(cp).map(function(cid){var c=catBy(cid);return c?'<span style="color:'+c.color+'">'+c.name+'</span>':'?'}).join(', ');
 var passed=cpLog.filter(function(l){return l.cp_id===cp.id}).length;
 var badgeBg=cols.length>1?'background:conic-gradient('+cols.map(function(c,i){var s=360/cols.length;return c+' '+(i*s)+'deg '+(i*s+s)+'deg'}).join(',')+')':'background:'+col;
 h+='<div class="cp-card" onclick="showCPD(\''+cp.id+'\')">';
