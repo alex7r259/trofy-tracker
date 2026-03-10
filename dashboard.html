@@ -96,6 +96,18 @@ input:focus,select:focus{border-color:var(--grn);outline:none}
 .rad-presets{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
 .rad-presets button{padding:4px 8px;font-size:10px;border-radius:6px;background:var(--pn2);color:var(--tx);border:1px solid var(--bd)}
 .rad-presets button:hover{border-color:var(--grn);color:var(--grn)}
+
+.vehicle-marker{position:relative;width:26px;height:26px;transform-origin:center center;}
+.vehicle-body{width:20px;height:20px;border-radius:6px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.6);}
+.vehicle-arrow{position:absolute;top:-6px;left:8px;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid white;}
+.vehicle-label{font-family:Oxanium;font-weight:700;font-size:10px;color:white;text-shadow:0 1px 3px black;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:4px;}
+.fab{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:10px;z-index:500;}
+.fab button{width:44px;height:44px;border-radius:50%;background:var(--pn);border:1px solid var(--bd);color:var(--tx);font-size:18px;box-shadow:0 4px 12px rgba(0,0,0,.5);}
+.crew-card{display:flex;align-items:center;gap:10px;}
+.crew-badge{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:Oxanium;font-weight:800;color:white;}
+.crew-info{flex:1;}
+.crew-speed{font-size:12px;color:var(--blu);}
+
 </style>
 </head>
 <body>
@@ -148,6 +160,13 @@ input:focus,select:focus{border-color:var(--grn);outline:none}
 <div class="gpx-preview" id="gpx-list"></div>
 <div class="form-r" style="margin-top:10px;gap:8px"><button class="btn btn-g" onclick="importGPXconfirm()">Импортировать</button><button class="btn btn-d" onclick="closeM('m-gpx')">Отмена</button></div>
 </div></div>
+
+<div class="fab">
+<button onclick="map.setZoom(map.getZoom()+1)">+</button>
+<button onclick="map.setZoom(map.getZoom()-1)">−</button>
+<button onclick="centerAll()">◎</button>
+</div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // ============ API ============
@@ -194,13 +213,33 @@ function poll(){
 setInterval(poll,2000);
 setTimeout(poll,500);
 
+function makeVehicleIcon(n,col){return L.divIcon({className:'',html:'<div class="vehicle-marker" style="transform:rotate('+(n.heading||0)+'deg)"><div class="vehicle-arrow"></div><div class="vehicle-body" style="background:'+col+'"></div></div>',iconSize:[26,26],iconAnchor:[13,13]})}
+function animateMove(marker,newLatLng){
+var start=marker.getLatLng();
+var frames=20;
+var i=0;
+var interval=setInterval(function(){
+i++;
+var lat=start.lat+(newLatLng[0]-start.lat)*(i/frames);
+var lng=start.lng+(newLatLng[1]-start.lng)*(i/frames);
+marker.setLatLng([lat,lng]);
+if(i>=frames) clearInterval(interval);
+},40);
+}
+function centerAll(){
+if(!nodes.length) return;
+var bounds=[];
+nodes.forEach(function(n){bounds.push([n.lat,n.lon]);});
+map.fitBounds(bounds,{padding:[40,40]});
+}
+
+
 // ============ MAP UPDATE ============
 function updateMap(){
   nodes.forEach(function(n){var k='n'+n.id,ll=[n.lat,n.lon],col=nc(n.id),p=partBy(n.id),label=p?'#'+p.num:'#'+n.id;
-  var age=n.age/1000,op=age>120?.3:age>60?.6:1;
-  if(!mks[k]){mks[k]=L.circleMarker(ll,{radius:8,fillColor:col,fillOpacity:op,color:'#fff',weight:2,opacity:op}).addTo(map);
-  mks[k].bindTooltip(label,{permanent:true,direction:'top',offset:[0,-12],className:'n-tip'});mks[k].on('click',function(){openDet(n.id)});
-  trails[k]=L.polyline([],{color:col,weight:2.5,opacity:.5}).addTo(map)}else{mks[k].setLatLng(ll);mks[k].setStyle({fillOpacity:op,opacity:op});mks[k].setTooltipContent(label)}});
+  if(!mks[k]){mks[k]=L.marker(ll,{icon:makeVehicleIcon(n,col)}).addTo(map);
+  mks[k].bindTooltip(label,{permanent:true,direction:'top',offset:[0,-18],className:'vehicle-label'});mks[k].on('click',function(){openDet(n.id)});
+  trails[k]=L.polyline([],{color:col,weight:2.5,opacity:.5}).addTo(map)}else{animateMove(mks[k],ll);mks[k].setIcon(makeVehicleIcon(n,col));mks[k].setTooltipContent(label)}});
   // Load tracks from server for each node
   if(pollN%10===0){
   nodes.forEach(function(n){var k='n'+n.id;if(!trails[k])return;
@@ -240,26 +279,18 @@ document.getElementById('cpd-b').innerHTML=h;document.getElementById('m-cpd').cl
 // ============ CREW LIST ============
 function rList(){var el=document.getElementById('pl'),h='';
 var sorted=parts.slice().sort(function(a,b){return a.num-b.num});
-sorted.forEach(function(p){var n=nodes.find(function(x){return x.id==p.dev_id}),col=nc(p.dev_id),cat=catBy(p.cat_id);
-var isSos=n&&(n.flags&1);
-h+='<div class="card'+(isSos?' sos':'')+'" onclick="openDet('+p.dev_id+')">';
-h+='<div class="card-bar" style="background:'+col+'"></div>';
-
-h+='<div class="nl-head">';
-h+='<span class="nl-num" style="color:'+col+'">#'+p.num+'</span>';
+sorted.forEach(function(p){var n=nodes.find(function(x){return x.id==p.dev_id}),col=nc(p.dev_id);
+h+='<div class="card" onclick="openDet('+p.dev_id+')">';
+h+='<div class="crew-card">';
+h+='<div class="crew-badge" style="background:'+col+'">#'+p.num+'</div>';
+h+='<div class="crew-info">';
+h+='<div>'+p.pilot+(p.navigator?' / '+p.navigator:'')+'</div>';
+h+='<div class="nl-car">'+p.car+'</div>';
 h+='</div>';
-
-h+='<div class="nl-crew">'+p.pilot+(p.navigator?' / '+p.navigator:'')+'</div>';
-
-h+='<div class="nl-car">'+p.car+(cat?' <span style="color:'+cat.color+'">'+cat.name+'</span>':'')+'</div>';
-
-if(n){
-h+='<div style="font-size:10px;margin-top:5px;color:var(--dm)">';
-h+='Скорость '+n.speed+' км/ч • Батарея '+n.battery+'%';
+if(n){h+='<div class="crew-speed">'+n.speed+' км/ч</div>';}
 h+='</div>';
-}
-
-h+='</div>'});
+h+='</div>';
+});
 nodes.forEach(function(n){if(partBy(n.id))return;
 h+='<div class="card" onclick="openDet('+n.id+')"><div class="card-bar" style="background:'+nc(n.id)+'"></div>';
 h+='<div class="nl-head"><span class="nl-num" style="color:'+nc(n.id)+'">DEV#'+n.id+'</span><span class="age-w" style="font-size:10px">не зарегистрирован</span></div>';
