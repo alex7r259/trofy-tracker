@@ -249,6 +249,14 @@ void deserializeEntry(const uint8_t* buf, NodeEntry& e) {
 
 // ==================== ОТПРАВКА ТАБЛИЦЫ ====================
 
+bool isTimestampNewer(uint32_t incomingTs, uint32_t currentTs) {
+  if (incomingTs == currentTs) return false;
+  // timestamp = секунды в пределах суток, учитываем переход через 00:00
+  const uint32_t DAY_SECONDS = 86400UL;
+  uint32_t diff = (incomingTs + DAY_SECONDS - currentTs) % DAY_SECONDS;
+  return diff > 0 && diff < (DAY_SECONDS / 2);
+}
+
 void broadcastTable() {
   if (!waitAux(500)) {
     Serial.println("[TX] AUX занят");
@@ -272,8 +280,9 @@ void broadcastTable() {
     uint8_t pkt[E220_MAX_PKT];
     
     // Заголовок
+    uint8_t pktSeq = mySeqNum++;
     pkt[0] = NODE_ID;
-    pkt[1] = mySeqNum;
+    pkt[1] = pktSeq;
     pkt[2] = batchSize;
     
     // Записи
@@ -291,7 +300,8 @@ void broadcastTable() {
     if (waitAux(300)) {
       loraSerial.write(pkt, pktLen);
       statTx++;
-      Serial.printf("[TX] seq:%d записей:%d размер:%dB\n", mySeqNum, batchSize, pktLen);
+      Serial.printf("[TX] seq:%d записей:%d размер:%dB\n", pktSeq, batchSize, pktLen);
+      addDedup(NODE_ID, pktSeq);
     }
     
     sent += batchSize;
@@ -302,9 +312,6 @@ void broadcastTable() {
     }
   }
   
-  // Свой пакет в дедупликацию
-  addDedup(NODE_ID, mySeqNum);
-  mySeqNum++;
 }
 
 // ==================== ПРИЁМ ====================
@@ -341,7 +348,7 @@ void processReceived(uint8_t* buf, int len) {
     
     if (existing) {
       // Обновляем только если входящий timestamp новее
-      if (incoming.timestamp > existing->timestamp) {
+      if (isTimestampNewer(incoming.timestamp, existing->timestamp)) {
         existing->lat = incoming.lat;
         existing->lon = incoming.lon;
         existing->alt = incoming.alt;
