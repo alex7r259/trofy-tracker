@@ -103,10 +103,15 @@ input:focus,select:focus{border-color:var(--grn);outline:none}
 .vehicle-label{font-family:Oxanium;font-weight:700;font-size:10px;color:white;text-shadow:0 1px 3px black;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:4px;}
 .fab{position:fixed;right:16px;bottom:80px;display:flex;flex-direction:column;gap:10px;z-index:500;}
 .fab button{width:44px;height:44px;border-radius:50%;background:var(--pn);border:1px solid var(--bd);color:var(--tx);font-size:18px;box-shadow:0 4px 12px rgba(0,0,0,.5);}
+.fab button.wide{width:56px;border-radius:22px;font-size:10px;font-weight:700;letter-spacing:.4px}
 .crew-card{display:flex;align-items:center;gap:10px;}
 .crew-badge{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:Oxanium;font-weight:800;color:white;}
 .crew-info{flex:1;}
 .crew-speed{font-size:12px;color:var(--blu);}
+
+#elev-wrap{margin-top:10px;background:var(--pn2);border:1px solid var(--bd);border-radius:8px;padding:8px;display:none}
+#elev-wrap h4{font-size:10px;color:var(--dm);letter-spacing:.6px;text-transform:uppercase;margin-bottom:6px}
+#elevChart{width:100%;height:120px;display:block}
 
 </style>
 </head>
@@ -165,6 +170,8 @@ input:focus,select:focus{border-color:var(--grn);outline:none}
 <button onclick="map.setZoom(map.getZoom()+1)">+</button>
 <button onclick="map.setZoom(map.getZoom()-1)">−</button>
 <button onclick="centerAll()">◎</button>
+<button class="wide" onclick="loadReplay()">REPLAY</button>
+<button class="wide" id="tv-btn" onclick="toggleTV()">TV OFF</button>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -181,6 +188,17 @@ function nc(i){return COL[i%COL.length]}
 var nodes=[],parts=[],cats=[],cps=[],cpLog=[],scores=[];
 var mks={},trails={},cpMks={},cpCirs={};
 var pollN=0,selDev=null,curTab='map';
+var replayMode=false;
+var replayTimer=null;
+var replayIndex=0;
+var replayTracks={};
+var stopTimers={};
+var stuckNodes={};
+var sosTriggered={};
+var sosSound=new Audio('/sos.mp3');
+var tvMode=false;
+var tvTimer=null;
+var mapboxToken='';
 
 function catBy(id){return cats.find(function(c){return c.id===id})}
 function partBy(did){return parts.find(function(p){return p.dev_id==did})}
@@ -233,17 +251,150 @@ nodes.forEach(function(n){bounds.push([n.lat,n.lon]);});
 map.fitBounds(bounds,{padding:[40,40]});
 }
 
+function loadReplay(){
+replayTracks={};
+if(replayTimer){clearInterval(replayTimer);replayTimer=null}
+var promises=nodes.map(function(n){
+return api('/api/tracks/'+n.id+'?limit=5000').then(function(t){replayTracks[n.id]=t||[]});
+});
+Promise.all(promises).then(startReplay).catch(function(){alert('Не удалось загрузить треки для replay')});
+}
+
+function startReplay(){
+replayMode=true;
+replayIndex=0;
+if(replayTimer)clearInterval(replayTimer);
+replayTimer=setInterval(stepReplay,100);
+}
+
+function stopReplay(){
+replayMode=false;
+if(replayTimer){clearInterval(replayTimer);replayTimer=null}
+}
+
+function stepReplay(){
+var moved=false;
+nodes.forEach(function(n){
+var tr=replayTracks[n.id];
+if(!tr||tr.length<=replayIndex)return;
+var p=tr[replayIndex],k='n'+n.id;
+if(mks[k]){mks[k].setLatLng([p.lat,p.lon]);moved=true}
+});
+replayIndex++;
+if(!moved)stopReplay();
+}
+
+function toggleTV(){if(tvMode){stopTV()}else{startTV()}}
+function startTV(){
+tvMode=true;
+document.getElementById('tv-btn').textContent='TV ON';
+if(tvTimer)clearInterval(tvTimer);
+tvTimer=setInterval(function(){if(!tvMode)return;focusLeader()},6000);
+focusLeader();
+}
+function stopTV(){
+tvMode=false;
+document.getElementById('tv-btn').textContent='TV OFF';
+if(tvTimer){clearInterval(tvTimer);tvTimer=null}
+}
+function focusLeader(){
+var fastest=null;
+nodes.forEach(function(n){if(!fastest||n.speed>fastest.speed)fastest=n});
+if(fastest)map.setView([fastest.lat,fastest.lon],15);
+}
+
+function highlightStuck(n){
+var k='n'+n.id;
+if(!mks[k])return;
+mks[k].setIcon(L.divIcon({className:'',html:'<div style="background:#ff9800;width:20px;height:20px;border-radius:50%;box-shadow:0 0 12px orange;border:2px solid #fff"></div>',iconSize:[20,20],iconAnchor:[10,10]}));
+}
+
+function triggerSOS(n){
+var msg='SOS экипажа #'+n.id;
+alert(msg);
+map.setView([n.lat,n.lon],16);
+sosSound.currentTime=0;
+sosSound.play().catch(function(){});
+}
+
+async function getElevation(lat,lon){
+if(!mapboxToken)return null;
+var z=14;
+var xx=(lon+180)/360*Math.pow(2,z);
+var yy=(1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,z);
+var x=Math.floor(xx),y=Math.floor(yy);
+var px=Math.floor((xx-x)*256),py=Math.floor((yy-y)*256);
+var url='https://api.mapbox.com/v4/mapbox.terrain-rgb/'+z+'/'+x+'/'+y+'.pngraw?access_token='+mapboxToken;
+var blob=await fetch(url).then(function(r){return r.blob()});
+var img=await createImageBitmap(blob);
+var cnv=document.createElement('canvas');cnv.width=1;cnv.height=1;
+var ctx=cnv.getContext('2d');ctx.drawImage(img,px,py,1,1,0,0,1,1);
+var d=ctx.getImageData(0,0,1,1).data;
+return -10000+((d[0]*256*256+d[1]*256+d[2])*0.1);
+}
+
+function drawElevationChart(heights){
+var wrap=document.getElementById('elev-wrap');
+var c=document.getElementById('elevChart');
+if(!c||!heights.length){if(wrap)wrap.style.display='none';return}
+wrap.style.display='block';
+var ctx=c.getContext('2d');
+var w=c.width=c.clientWidth,h=c.height=120,pad=16;
+ctx.clearRect(0,0,w,h);
+var min=Math.min.apply(null,heights),max=Math.max.apply(null,heights),rng=Math.max(max-min,1);
+ctx.strokeStyle='#253040';ctx.beginPath();ctx.moveTo(pad,h-pad);ctx.lineTo(w-pad,h-pad);ctx.moveTo(pad,pad);ctx.lineTo(pad,h-pad);ctx.stroke();
+ctx.strokeStyle='#29b6f6';ctx.lineWidth=2;ctx.beginPath();
+heights.forEach(function(v,i){var x=pad+(i/(heights.length-1||1))*(w-pad*2);var y=h-pad-((v-min)/rng)*(h-pad*2);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)});
+ctx.stroke();
+ctx.fillStyle='#607888';ctx.font='10px Share Tech Mono';ctx.fillText(Math.round(min)+'m',w-44,h-6);ctx.fillText(Math.round(max)+'m',w-44,pad+4);
+}
+
+function buildElevation(track){
+if(!track||!track.length){drawElevationChart([]);return;}
+if(track.some(function(p){return typeof p.alt==='number'})){
+drawElevationChart(track.map(function(p){return p.alt||0}));
+return;
+}
+Promise.all(track.map(function(p){return getElevation(p.lat,p.lon)})).then(function(profile){
+drawElevationChart(profile.filter(function(v){return typeof v==='number'&&!isNaN(v)}));
+}).catch(function(){drawElevationChart([])});
+}
+
 
 // ============ MAP UPDATE ============
 function updateMap(){
   nodes.forEach(function(n){var k='n'+n.id,ll=[n.lat,n.lon],col=nc(n.id),p=partBy(n.id),label=p?'#'+p.num:'#'+n.id;
   if(!mks[k]){mks[k]=L.marker(ll,{icon:makeVehicleIcon(n,col)}).addTo(map);
   mks[k].bindTooltip(label,{permanent:true,direction:'top',offset:[0,-18],className:'vehicle-label'});mks[k].on('click',function(){openDet(n.id)});
-  trails[k]=L.polyline([],{color:col,weight:2.5,opacity:.5}).addTo(map)}else{animateMove(mks[k],ll);mks[k].setIcon(makeVehicleIcon(n,col));mks[k].setTooltipContent(label)}});
+  trails[k]=L.polyline([],{color:col,weight:2.5,opacity:.5}).addTo(map)}else if(!replayMode){animateMove(mks[k],ll);mks[k].setIcon(makeVehicleIcon(n,col));mks[k].setTooltipContent(label)}});
+
+  nodes.forEach(function(n){
+  if(n.speed<2){
+  if(!stopTimers[n.id])stopTimers[n.id]=Date.now();
+  var dur=Date.now()-stopTimers[n.id];
+  if(dur>600000&&!stuckNodes[n.id]){highlightStuck(n);stuckNodes[n.id]=true}
+  }else{
+  stopTimers[n.id]=null;
+  stuckNodes[n.id]=false;
+  var k='n'+n.id;
+  if(mks[k])mks[k].setIcon(makeVehicleIcon(n,nc(n.id)));
+  }
+  });
+
+  nodes.forEach(function(n){
+  if((n.flags&1)&&!sosTriggered[n.id]){triggerSOS(n);sosTriggered[n.id]=true}
+  if(!(n.flags&1))sosTriggered[n.id]=false;
+  });
+
   // Load tracks from server for each node
   if(pollN%10===0){
   nodes.forEach(function(n){var k='n'+n.id;if(!trails[k])return;
-  api('/api/tracks/'+n.id+'?limit=2000').then(function(tr){if(tr&&tr.length)trails[k].setLatLngs(tr.map(function(p){return[p.lat,p.lon]}))}).catch(function(){})});
+  api('/api/tracks/'+n.id+'?limit=2000').then(function(tr){
+  if(tr&&tr.length){
+  trails[k].setLatLngs(tr.map(function(p){return[p.lat,p.lon]}));
+  if(selDev==n.id)buildElevation(tr);
+  }
+  }).catch(function(){})});
   }
 }
 
@@ -311,6 +462,7 @@ if(p){h+='<div class="det-crew">'+p.pilot+(p.navigator?' и '+p.navigator:'')+'<
 h+='<div class="det-car">'+p.car+(cat?' — <span style="color:'+cat.color+'">'+cat.name+'</span>':'')+'</div>';
 }
 h+='</div>';
+h+='<div id="elev-wrap"><h4>Профиль высоты</h4><canvas id="elevChart"></canvas></div>';
 if(n){var dirs=['С','СВ','В','ЮВ','Ю','ЮЗ','З','СЗ'],dir=dirs[Math.round((n.heading||0)/45)%8];
 h+='<div class="det-g">';
 h+='<div class="det-c"><div class="k">Широта</div><div class="v" style="color:var(--grn);font-size:14px">'+n.lat.toFixed(6)+'</div></div>';
@@ -328,7 +480,8 @@ myCps.forEach(function(cp){var hit=cpLog.find(function(l){return l.dev_id==did&&
 var ts=hit?hit.passed_at.split('T')[1].substring(0,8):'---';var c=hit?'var(--grn)':'var(--dm)';
 h+='<div class="det-cp-row"><span style="color:'+c+'">'+(hit?'✓ ':'○ ')+cp.name+' <span style="color:var(--amb)">'+(cp.points||0)+'</span></span><span style="color:var(--dm)">'+ts+'</span></div>'})}}
 h+='<button class="btn btn-d" style="margin-top:14px" onclick="window.open(API+\'/api/tracks/'+did+'/gpx\')">Скачать трек GPX</button>';
-el.innerHTML=h}
+el.innerHTML=h;
+api('/api/tracks/'+did+'?limit=2000').then(function(tr){if(tr&&tr.length)buildElevation(tr);else drawElevationChart([])}).catch(function(){drawElevationChart([])})}
 function panTo(d){var n=nodes.find(function(x){return x.id==d});if(n){showTab('map');setTimeout(function(){map.setView([n.lat,n.lon],16)},100)}}
 
 // ============ PARTICIPANT FORM ============
