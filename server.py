@@ -17,7 +17,7 @@ Trophy Raid Server — оффлайн-сервер для трофи-рейда.
     - Хранит всё в SQLite (trophy_raid.db)
     - Раздаёт оффлайн-тайлы из ./tiles/
     - REST API для UI
-    - WebSocket для push-обновлений
+    - HTTP polling для обновлений UI
 
 Подготовка дома (с интернетом):
     python download_tiles.py --lat 55.75 --lon 37.62 --radius 30 --zoom 8-16
@@ -32,7 +32,7 @@ import argparse
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import threading
 import struct
 import os
@@ -61,6 +61,7 @@ UI_FILE = Path('dashboard.html')
 class Database:
     def __init__(self, path):
         self.path = path
+        self.lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute('PRAGMA journal_mode=WAL')
@@ -119,7 +120,7 @@ class Database:
     
     def update_node(self, dev_id, lat, lon, alt, speed, heading, battery, hdop, flags):
         now = datetime.now(timezone.utc).isoformat()
-        self.conn.execute('''
+        self.execute('''
             INSERT INTO nodes (dev_id,lat,lon,alt,speed,heading,battery,hdop,flags,updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(dev_id) DO UPDATE SET
@@ -132,9 +133,9 @@ class Database:
             return
         now = datetime.now(timezone.utc).isoformat()
         # Не дублируем если та же позиция и < 30с
-        last = self.conn.execute(
+        last = self.fetchone(
             'SELECT lat,lon,recorded_at FROM tracks WHERE dev_id=? ORDER BY id DESC LIMIT 1',
-            (dev_id,)).fetchone()
+            (dev_id,))
         if last and last['lat'] == lat and last['lon'] == lon:
             try:
                 dt = datetime.fromisoformat(last['recorded_at'].replace('Z','+00:00'))
@@ -142,32 +143,48 @@ class Database:
                     return
             except:
                 pass
-        self.conn.execute(
+        self.execute(
             'INSERT INTO tracks (dev_id,lat,lon,alt,speed,recorded_at) VALUES (?,?,?,?,?,?)',
             (dev_id, lat, lon, alt, speed, now))
     
     def check_cp(self, dev_id, lat, lon):
-        cps = self.conn.execute('SELECT * FROM checkpoints').fetchall()
+        cps = self.fetchall('SELECT * FROM checkpoints')
         for cp in cps:
-            existing = self.conn.execute(
+            existing = self.fetchone(
                 'SELECT 1 FROM cp_log WHERE dev_id=? AND cp_id=?',
-                (dev_id, cp['id'])).fetchone()
+                (dev_id, cp['id']))
             if existing:
                 continue
             dist = haversine(lat, lon, cp['lat'], cp['lon'])
             if dist <= cp['radius']:
                 now = datetime.now(timezone.utc).isoformat()
-                self.conn.execute(
+                self.execute(
                     'INSERT OR IGNORE INTO cp_log (dev_id,cp_id,passed_at) VALUES (?,?,?)',
                     (dev_id, cp['id'], now))
                 log.info(f'CP: dev={dev_id} cp={cp["name"]} d={dist:.0f}m pts={cp["points"]}')
                 cui.event(f'КТ ВЗЯТА! #{dev_id} → {cp["name"]} (+{cp["points"]} очков)', cui.C.GRN)
     
+    def execute(self, query, params=(), commit=False):
+        with self.lock:
+            cur = self.conn.execute(query, params)
+            if commit:
+                self.conn.commit()
+            return cur
+
+    def fetchone(self, query, params=()):
+        with self.lock:
+            return self.conn.execute(query, params).fetchone()
+
+    def fetchall(self, query, params=()):
+        with self.lock:
+            return self.conn.execute(query, params).fetchall()
+
     def commit(self):
-        self.conn.commit()
+        with self.lock:
+            self.conn.commit()
     
     def get_nodes(self):
-        rows = self.conn.execute('SELECT * FROM nodes').fetchall()
+        rows = self.fetchall('SELECT * FROM nodes')
         now = datetime.now(timezone.utc)
         result = []
         for r in rows:
@@ -186,19 +203,19 @@ class Database:
         return result
     
     def get_tracks_summary(self):
-        return [dict(r) for r in self.conn.execute(
-            'SELECT dev_id, COUNT(*) as points FROM tracks GROUP BY dev_id').fetchall()]
+        return [dict(r) for r in self.fetchall(
+            'SELECT dev_id, COUNT(*) as points FROM tracks GROUP BY dev_id')]
     
     def get_track(self, dev_id, limit=5000):
-        rows = self.conn.execute(
+        rows = self.fetchall(
             'SELECT lat,lon,alt,speed,recorded_at FROM tracks WHERE dev_id=? ORDER BY id DESC LIMIT ?',
-            (dev_id, limit)).fetchall()
+            (dev_id, limit))
         return [dict(r) for r in reversed(rows)]
     
     def get_track_gpx(self, dev_id):
-        rows = self.conn.execute(
-            'SELECT lat,lon,alt,recorded_at FROM tracks WHERE dev_id=? ORDER BY id', (dev_id,)).fetchall()
-        p = self.conn.execute('SELECT * FROM participants WHERE dev_id=?', (dev_id,)).fetchone()
+        rows = self.fetchall(
+            'SELECT lat,lon,alt,recorded_at FROM tracks WHERE dev_id=? ORDER BY id', (dev_id,))
+        p = self.fetchone('SELECT * FROM participants WHERE dev_id=?', (dev_id,))
         name = f'#{p["num"]} {p["pilot"]}' if p else f'Dev#{dev_id}'
         gpx = '<?xml version="1.0"?>\n<gpx version="1.1" creator="TrophyRaid">\n'
         gpx += f'<trk><name>{name}</name><trkseg>\n'
@@ -208,7 +225,7 @@ class Database:
         return gpx, name
     
     def get_scores(self):
-        return [dict(r) for r in self.conn.execute('''
+        return [dict(r) for r in self.fetchall('''
             SELECT p.dev_id, p.num, p.pilot, p.navigator, p.car, p.cat_id,
                    COALESCE(SUM(cp.points),0) as score,
                    COUNT(cl.cp_id) as cps_passed
@@ -216,14 +233,14 @@ class Database:
             LEFT JOIN cp_log cl ON p.dev_id=cl.dev_id
             LEFT JOIN checkpoints cp ON cl.cp_id=cp.id
             GROUP BY p.dev_id ORDER BY score DESC, p.num ASC
-        ''').fetchall()]
+        ''')]
     
     def get_cp_log(self):
-        return [dict(r) for r in self.conn.execute('''
+        return [dict(r) for r in self.fetchall('''
             SELECT cl.dev_id, cl.cp_id, cl.passed_at, cp.name as cp_name, cp.points
             FROM cp_log cl JOIN checkpoints cp ON cl.cp_id=cp.id
             ORDER BY cl.passed_at DESC
-        ''').fetchall()]
+        ''')]
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -244,6 +261,7 @@ class GatewayPoller:
         self.poll_count = 0
         self.last_error = None
         self.connected = False
+        self.err_count = 0
     
     def start(self):
         self.running = True
@@ -274,6 +292,7 @@ class GatewayPoller:
                 self.poll_count += 1
                 self.connected = True
                 self.last_error = None
+                self.err_count = 0
                 
                 if self.poll_count % 50 == 0:
                     nodes_list = self.db.get_nodes()
@@ -282,7 +301,8 @@ class GatewayPoller:
             except Exception as e:
                 self.connected = False
                 self.last_error = str(e)
-                if self.poll_count % 10 == 0:
+                self.err_count += 1
+                if self.err_count % 10 == 0:
                     cui.log_line('ERR', f'Шлюз: {e}')
             
             time.sleep(self.interval)
@@ -389,7 +409,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
             if dev_id is None:
                 self._json({'error': 'invalid dev_id'}, 400)
                 return
-            row = self.db.conn.execute('SELECT * FROM nodes WHERE dev_id=?', (dev_id,)).fetchone()
+            row = self.db.fetchone('SELECT * FROM nodes WHERE dev_id=?', (dev_id,))
             self._json(dict(row) if row else {'error': 'not found'})
             return
         
@@ -415,22 +435,25 @@ class RequestHandler(SimpleHTTPRequestHandler):
             return
         
         if path == '/api/participants':
-            rows = self.db.conn.execute('SELECT * FROM participants').fetchall()
+            rows = self.db.fetchall('SELECT * FROM participants')
             self._json([dict(r) for r in rows])
             return
         
         if path == '/api/checkpoints':
-            rows = self.db.conn.execute('SELECT * FROM checkpoints').fetchall()
+            rows = self.db.fetchall('SELECT * FROM checkpoints')
             result = []
             for r in rows:
                 d = dict(r)
-                d['cat_ids'] = json.loads(d['cat_ids'])
+                try:
+                    d['cat_ids'] = json.loads(d.get('cat_ids') or '[]')
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    d['cat_ids'] = []
                 result.append(d)
             self._json(result)
             return
         
         if path == '/api/categories':
-            rows = self.db.conn.execute('SELECT * FROM categories').fetchall()
+            rows = self.db.fetchall('SELECT * FROM categories')
             self._json([dict(r) for r in rows])
             return
         
@@ -450,22 +473,21 @@ class RequestHandler(SimpleHTTPRequestHandler):
         
         if path == '/api/participants':
             data = json.loads(body)
-            self.db.conn.execute('''
+            self.db.execute('''
                 INSERT INTO participants (dev_id,num,pilot,navigator,car,cat_id)
                 VALUES (?,?,?,?,?,?)
                 ON CONFLICT(dev_id) DO UPDATE SET
                     num=excluded.num, pilot=excluded.pilot, navigator=excluded.navigator,
                     car=excluded.car, cat_id=excluded.cat_id
             ''', (data['dev_id'], data['num'], data['pilot'],
-                  data.get('navigator',''), data.get('car',''), data.get('cat_id','')))
-            self.db.commit()
+                  data.get('navigator',''), data.get('car',''), data.get('cat_id','')), commit=True)
             self._json({'ok': True})
             return
         
         if path == '/api/checkpoints':
             data = json.loads(body)
             cp_id = data.get('id') or f'cp{int(time.time()*1000)}'
-            self.db.conn.execute('''
+            self.db.execute('''
                 INSERT INTO checkpoints (id,name,lat,lon,radius,cp_type,points,cat_ids)
                 VALUES (?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
@@ -474,8 +496,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     points=excluded.points, cat_ids=excluded.cat_ids
             ''', (cp_id, data['name'], data['lat'], data['lon'],
                   data.get('radius',50), data.get('cp_type','cp'),
-                  data.get('points',10), json.dumps(data.get('cat_ids',[]))))
-            self.db.commit()
+                  data.get('points',10), json.dumps(data.get('cat_ids',[]))), commit=True)
             self._json({'ok': True, 'id': cp_id})
             return
         
@@ -501,7 +522,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     name_el = el.find(f'{ns}name')
                     name = name_el.text if name_el is not None else f'КТ-{len(imported)+1}'
                     cp_id = f'cp{int(time.time()*1000)}{len(imported)}'
-                    self.db.conn.execute(
+                    self.db.execute(
                         'INSERT INTO checkpoints VALUES (?,?,?,?,?,?,?,?)',
                         (cp_id, name, lat, lon, radius, 'cp', pts, json.dumps(cat_ids)))
                     imported.append({'id': cp_id, 'name': name, 'lat': lat, 'lon': lon})
@@ -513,10 +534,9 @@ class RequestHandler(SimpleHTTPRequestHandler):
         if path == '/api/categories':
             data = json.loads(body)
             cat_id = data.get('id') or f'c{int(time.time()*1000)}'
-            self.db.conn.execute(
+            self.db.execute(
                 'INSERT INTO categories VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, color=excluded.color',
-                (cat_id, data['name'], data.get('color','#ffab00')))
-            self.db.commit()
+                (cat_id, data['name'], data.get('color','#ffab00')), commit=True)
             self._json({'ok': True, 'id': cat_id})
             return
         
@@ -530,22 +550,34 @@ class RequestHandler(SimpleHTTPRequestHandler):
             if dev_id is None:
                 self._json({'error': 'invalid dev_id'}, 400)
                 return
-            self.db.conn.execute('DELETE FROM participants WHERE dev_id=?', (dev_id,))
-            self.db.commit()
+            self.db.execute('DELETE FROM participants WHERE dev_id=?', (dev_id,), commit=True)
             self._json({'ok': True})
             return
         
         if path.startswith('/api/checkpoints/'):
             cp_id = path.split('/')[-1]
-            self.db.conn.execute('DELETE FROM checkpoints WHERE id=?', (cp_id,))
-            self.db.conn.execute('DELETE FROM cp_log WHERE cp_id=?', (cp_id,))
-            self.db.commit()
+            self.db.execute('DELETE FROM checkpoints WHERE id=?', (cp_id,))
+            self.db.execute('DELETE FROM cp_log WHERE cp_id=?', (cp_id,), commit=True)
             self._json({'ok': True})
             return
         
         if path.startswith('/api/categories/'):
             cat_id = path.split('/')[-1]
-            self.db.conn.execute('DELETE FROM categories WHERE id=?', (cat_id,))
+            self.db.execute('DELETE FROM categories WHERE id=?', (cat_id,))
+
+            rows = self.db.fetchall('SELECT id, cat_ids FROM checkpoints')
+            for r in rows:
+                try:
+                    cats = json.loads(r['cat_ids'] or '[]')
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    cats = []
+                if cat_id in cats:
+                    cats = [c for c in cats if c != cat_id]
+                    self.db.execute(
+                        'UPDATE checkpoints SET cat_ids=? WHERE id=?',
+                        (json.dumps(cats), r['id'])
+                    )
+
             self.db.commit()
             self._json({'ok': True})
             return
@@ -603,7 +635,7 @@ def main():
     RequestHandler.db = database
     RequestHandler.poller = poller
     
-    server = HTTPServer((args.host, args.port), RequestHandler)
+    server = ThreadingHTTPServer((args.host, args.port), RequestHandler)
     
     # Статус
     cui.section('Статус системы')
