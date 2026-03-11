@@ -180,6 +180,7 @@ var nodes=[],parts=[],cats=[],cps=[],logs=[];
 var mks={},trailLns={},cpMks={},cpCirs={},trackCache={};
 var heatLayer=null,heatOn=false,trailsOn=true;
 var pN=0,selDev=null,followDev=null,activeCat='all';
+var mapFitted=false;
 
 function catBy(id){return cats.find(function(c){return c.id===id})}
 function partBy(d){return parts.find(function(p){return p.dev_id==d})}
@@ -193,7 +194,7 @@ L.tileLayer('/tiles/{z}/{x}/{y}.png',{maxZoom:18,errorTileUrl:'https://tile.open
 map.on('click',function(e){if($('m-c').classList.contains('show')){$('mc-lat').value=e.latlng.lat.toFixed(7);$('mc-lon').value=e.latlng.lng.toFixed(7)}});
 
 function poll(){F('/api/nodes').then(function(n){nodes=n;pN++;$('led').className='hdr-dot on';$('gw-st').textContent='Подключено';$('node-cnt').textContent=n.length+' узл';$('poll-cnt').textContent='#'+pN;updMap();rCrews();if(selDev!==null)rDet(selDev);if(followDev!==null){var fn=nodes.find(function(x){return x.id==followDev});if(fn)map.panTo([fn.lat,fn.lon])}}).catch(function(){$('led').className='hdr-dot off';$('gw-st').textContent='Нет связи'})}
-function loadMeta(){Promise.all([F('/api/participants'),F('/api/categories'),F('/api/checkpoints')]).then(function(r){parts=r[0];cats=r[1];cps=r[2];drawCPs();if(cps.length){map.fitBounds(L.latLngBounds(cps.map(function(cp){return[cp.lat,cp.lon]})),{padding:[40,40]})}rCatFilters();rCPlist();rCats()}).catch(function(){})}
+function loadMeta(){Promise.all([F('/api/participants'),F('/api/categories'),F('/api/checkpoints')]).then(function(r){parts=r[0];cats=r[1];cps=r[2];drawCPs();if(!mapFitted&&cps.length>0){map.fitBounds(L.latLngBounds(cps.map(function(cp){return[cp.lat,cp.lon]})),{padding:[40,40]});mapFitted=true}rCatFilters();rCPlist();rCats()}).catch(function(){})}
 setInterval(poll,1500);setInterval(loadMeta,15000);setTimeout(function(){loadMeta();poll()},300);
 
 function addLog(type,msg){logs.unshift({time:new Date().toLocaleTimeString().substring(0,8),type:type,msg:msg});if(logs.length>100)logs.length=100;rLog()}
@@ -203,7 +204,7 @@ setInterval(function(){nodes.forEach(function(n){loadTrack(n.id)})},30000);
 
 function drawCPs(){Object.values(cpMks).forEach(function(m){map.removeLayer(m)});Object.keys(cpCirs).forEach(function(k){if(Array.isArray(cpCirs[k]))cpCirs[k].forEach(function(c){map.removeLayer(c)})});cpMks={};cpCirs={};cps.forEach(function(cp){var ids=cpCatIds(cp);if(activeCat!=='all'&&ids.indexOf(activeCat)===-1)return;var col=cpColor(cp),isB=cp.cp_type==='base';var cols=[];ids.forEach(function(cid){var cat=cats.find(function(x){return x.id==cid});if(!cat)return;cols.push(cat.color)});if(!cols.length)cols=[col];var bg=cols.length>1?'background:conic-gradient('+cols.map(function(c,i){var s=360/cols.length;return c+' '+(i*s)+'deg '+(i*s+s)+'deg'}).join(',')+')':'background:'+col;var icon=L.divIcon({className:'cp-icon',html:'<div class="cpm" style="'+bg+(isB?';width:26px;height:26px':'')+'">'+(cp.name||'CP').replace(/[^A-Za-z0-9\u0410-\u044f\u0451\u0401]/g,'').substring(0,3)+'</div>',iconSize:[22,22],iconAnchor:[11,11]});cpMks[cp.id]=L.marker([cp.lat,cp.lon],{icon:icon}).addTo(map);cpMks[cp.id].bindPopup('<b>'+(cp.name||'CP')+'</b><br>Тип: '+cp.cp_type+'<br>Радиус: '+cpRadius(cp)+' м');cpMks[cp.id].on('click',function(){editCP(cp.id)});cpCirs[cp.id]=[];cols.forEach(function(c,ci){cpCirs[cp.id].push(L.circle([cp.lat,cp.lon],{radius:cpRadius(cp)+(ci*2),color:c,fillColor:c,fillOpacity:.06,weight:1.5,dashArray:'6 4'}).addTo(map))})})}
 
-function fitAll(){if(!nodes.length)return;map.fitBounds(L.latLngBounds(nodes.map(function(n){return[n.lat,n.lon]})),{padding:[40,40]})}
+function fitAll(){var pts=[];nodes.forEach(function(n){pts.push([n.lat,n.lon])});cps.forEach(function(cp){pts.push([cp.lat,cp.lon])});if(!pts.length)return;map.fitBounds(L.latLngBounds(pts),{padding:[40,40]})}
 function toggleHeat(){heatOn=!heatOn;$('btn-heat').classList.toggle('act',heatOn);if(!heatOn&&heatLayer){map.removeLayer(heatLayer);heatLayer=null}else updMap()}
 function toggleTrails(){trailsOn=!trailsOn;$('btn-trail').classList.toggle('act',trailsOn);Object.keys(trailLns).forEach(function(k){map.removeLayer(trailLns[k]);delete trailLns[k]});if(trailsOn||selDev!==null)nodes.forEach(function(n){loadTrack(n.id)})}
 function selectNode(id){if(selDev!==null&&!trailsOn&&trailLns[selDev]){map.removeLayer(trailLns[selDev]);delete trailLns[selDev]}selDev=id;rDet(id);rCrews();loadTrack(id);Object.keys(mks).forEach(function(k){var isSel=parseInt(k)===id;mks[k].setStyle({weight:isSel?3:1.5,color:isSel?'#fff':'rgba(255,255,255,.5)'})});rTab('detail');addLog('sys','Выбран #'+(partBy(id)?partBy(id).num:id))}
