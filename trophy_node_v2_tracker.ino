@@ -83,8 +83,8 @@
 #define E220_MAX_PKT    512   // буфер E220
 #define MAX_ENTRIES_PKT ((E220_MAX_PKT - HEADER_SIZE - CRC_SIZE) / ENTRY_SIZE)  // 25
 
-#define TX_INTERVAL     30000
-#define TX_JITTER       5000
+#define TX_INTERVAL     20000
+#define TX_JITTER       10000
 #define RELAY_JITTER_MIN 200
 #define RELAY_JITTER_MAX 800
 
