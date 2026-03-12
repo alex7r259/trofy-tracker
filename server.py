@@ -24,6 +24,8 @@ Trophy Raid Server — оффлайн-сервер для трофи-рейда.
 """
 
 import asyncio
+import base64
+import hashlib
 import json
 import time
 import math
@@ -55,6 +57,55 @@ except ImportError:
 DB_PATH = 'trophy_raid.db'
 TILE_DIR = Path('tiles')
 UI_FILE = Path('dashboard.html')
+
+
+class WebSocketHub:
+    def __init__(self):
+        self._clients = set()
+        self._lock = threading.RLock()
+
+    def add(self, sock):
+        with self._lock:
+            self._clients.add(sock)
+
+    def remove(self, sock):
+        with self._lock:
+            self._clients.discard(sock)
+
+    def count(self):
+        with self._lock:
+            return len(self._clients)
+
+    def broadcast_json(self, payload):
+        msg = json.dumps(payload, ensure_ascii=False)
+        data = msg.encode('utf-8')
+        frame = self._encode_text_frame(data)
+        dead = []
+        with self._lock:
+            clients = list(self._clients)
+        for c in clients:
+            try:
+                c.sendall(frame)
+            except Exception:
+                dead.append(c)
+        if dead:
+            with self._lock:
+                for c in dead:
+                    self._clients.discard(c)
+
+    @staticmethod
+    def _encode_text_frame(payload: bytes) -> bytes:
+        ln = len(payload)
+        if ln <= 125:
+            header = bytes([0x81, ln])
+        elif ln <= 65535:
+            header = bytes([0x81, 126]) + struct.pack('!H', ln)
+        else:
+            header = bytes([0x81, 127]) + struct.pack('!Q', ln)
+        return header + payload
+
+
+WS_HUB = WebSocketHub()
 
 
 # ============ DATABASE ============
@@ -295,6 +346,7 @@ class GatewayPoller:
                     self.db.check_cp(did, n.get('lat',0), n.get('lon',0))
                 
                 self.db.commit()
+                WS_HUB.broadcast_json({'type': 'nodes', 'nodes': self.db.get_nodes(), 'poll_count': self.poll_count + 1})
                 self.poll_count += 1
                 self.connected = True
                 self.last_error = None
@@ -355,6 +407,71 @@ class RequestHandler(SimpleHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', 0))
         return self.rfile.read(length) if length else b''
 
+    def _handle_ws_upgrade(self):
+        key = self.headers.get('Sec-WebSocket-Key')
+        if not key:
+            self.send_error(400, 'Missing Sec-WebSocket-Key')
+            return
+
+        accept = base64.b64encode(
+            hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode('utf-8')).digest()
+        ).decode('ascii')
+
+        self.send_response(101, 'Switching Protocols')
+        self.send_header('Upgrade', 'websocket')
+        self.send_header('Connection', 'Upgrade')
+        self.send_header('Sec-WebSocket-Accept', accept)
+        self.end_headers()
+
+        sock = self.connection
+        sock.settimeout(1.0)
+        WS_HUB.add(sock)
+
+        # Первичный снимок сразу после подключения
+        WS_HUB.broadcast_json({'type': 'nodes', 'nodes': self.db.get_nodes(), 'poll_count': self.poller.poll_count if self.poller else 0})
+
+        try:
+            while True:
+                # Читаем и игнорируем входящие фреймы (ping/pong/close/данные)
+                hdr = self.rfile.read(2)
+                if not hdr or len(hdr) < 2:
+                    break
+                b1, b2 = hdr[0], hdr[1]
+                opcode = b1 & 0x0F
+                masked = (b2 & 0x80) != 0
+                ln = b2 & 0x7F
+                if ln == 126:
+                    ext = self.rfile.read(2)
+                    if len(ext) < 2:
+                        break
+                    ln = struct.unpack('!H', ext)[0]
+                elif ln == 127:
+                    ext = self.rfile.read(8)
+                    if len(ext) < 8:
+                        break
+                    ln = struct.unpack('!Q', ext)[0]
+
+                if masked:
+                    m = self.rfile.read(4)
+                    if len(m) < 4:
+                        break
+                payload = self.rfile.read(ln) if ln else b''
+                if ln and len(payload) < ln:
+                    break
+
+                if opcode == 0x8:  # close
+                    break
+                if opcode == 0x9:  # ping -> pong
+                    pong = bytes([0x8A, len(payload)]) + payload
+                    try:
+                        sock.sendall(pong)
+                    except Exception:
+                        break
+        except Exception:
+            pass
+        finally:
+            WS_HUB.remove(sock)
+
     @staticmethod
     def _safe_int(value):
         try:
@@ -371,6 +488,10 @@ class RequestHandler(SimpleHTTPRequestHandler):
     
     def do_GET(self):
         path = self.path.split('?')[0]
+
+        if path == '/ws' and self.headers.get('Upgrade', '').lower() == 'websocket':
+            self._handle_ws_upgrade()
+            return
         
         # UI
         if path == '/':
@@ -403,6 +524,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 'db_path': str(DB_PATH),
                 'nodes_count': len(self.db.get_nodes()),
                 'tracks_count': sum(t['points'] for t in self.db.get_tracks_summary()),
+                'ws_clients': WS_HUB.count(),
             })
             return
         
@@ -662,6 +784,7 @@ def main():
     cui.section('API endpoints', cui.C.GRY)
     endpoints = [
         ('GET  /', 'Dashboard UI'),
+        ('GET  /ws', 'WebSocket поток узлов'),
         ('GET  /tiles/{z}/{x}/{y}.png', 'Оффлайн-тайлы'),
         ('GET  /api/nodes', 'Все узлы'),
         ('GET  /api/scores', 'Таблица очков'),
