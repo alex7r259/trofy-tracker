@@ -95,13 +95,23 @@ class WebSocketHub:
 
     @staticmethod
     def _encode_text_frame(payload: bytes) -> bytes:
+        return WebSocketHub._encode_frame(0x1, payload)
+
+    @staticmethod
+    def _encode_control_frame(opcode: int, payload: bytes = b'') -> bytes:
+        # control-фреймы по RFC 6455 ограничены 125 байтами
+        return WebSocketHub._encode_frame(opcode, payload[:125])
+
+    @staticmethod
+    def _encode_frame(opcode: int, payload: bytes, fin: bool = True) -> bytes:
+        first = (0x80 if fin else 0x00) | (opcode & 0x0F)
         ln = len(payload)
         if ln <= 125:
-            header = bytes([0x81, ln])
+            header = bytes([first, ln])
         elif ln <= 65535:
-            header = bytes([0x81, 126]) + struct.pack('!H', ln)
+            header = bytes([first, 126]) + struct.pack('!H', ln)
         else:
-            header = bytes([0x81, 127]) + struct.pack('!Q', ln)
+            header = bytes([first, 127]) + struct.pack('!Q', ln)
         return header + payload
 
 
@@ -427,8 +437,16 @@ class RequestHandler(SimpleHTTPRequestHandler):
         sock.settimeout(1.0)
         WS_HUB.add(sock)
 
-        # Первичный снимок сразу после подключения
-        WS_HUB.broadcast_json({'type': 'nodes', 'nodes': self.db.get_nodes(), 'poll_count': self.poller.poll_count if self.poller else 0})
+        # Первичный снимок только для нового клиента
+        init_msg = json.dumps(
+            {'type': 'nodes', 'nodes': self.db.get_nodes(), 'poll_count': self.poller.poll_count if self.poller else 0},
+            ensure_ascii=False
+        ).encode('utf-8')
+        try:
+            sock.sendall(WS_HUB._encode_text_frame(init_msg))
+        except Exception:
+            WS_HUB.remove(sock)
+            return
 
         try:
             while True:
@@ -462,7 +480,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 if opcode == 0x8:  # close
                     break
                 if opcode == 0x9:  # ping -> pong
-                    pong = bytes([0x8A, len(payload)]) + payload
+                    pong = WS_HUB._encode_control_frame(0xA, payload)
                     try:
                         sock.sendall(pong)
                     except Exception:
