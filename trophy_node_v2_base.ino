@@ -77,8 +77,9 @@
 #define MAX_NODES       35    // макс. узлов в таблице
 #define ENTRY_SIZE      20    // байт на запись
 #define HEADER_SIZE     3     // байт заголовок
+#define CRC_SIZE        2     // CRC16-CCITT в конце пакета
 #define E220_MAX_PKT    512   // буфер E220
-#define MAX_ENTRIES_PKT ((E220_MAX_PKT - HEADER_SIZE) / ENTRY_SIZE)  // 25
+#define MAX_ENTRIES_PKT ((E220_MAX_PKT - HEADER_SIZE - CRC_SIZE) / ENTRY_SIZE)  // 25
 
 #define TX_INTERVAL     30000
 #define TX_JITTER       5000
@@ -108,6 +109,7 @@ struct NodeEntry {
   uint8_t  flags;       // bit0=SOS
   // Локальные поля (не передаются):
   unsigned long localRxTime;  // millis() когда получили
+  int16_t lastRssi;           // RSSI последнего пакета от отправителя (дБм)
 };
 
 NodeEntry nodeTable[MAX_NODES];
@@ -121,6 +123,7 @@ int dedupPos = 0;
 
 // Статистика
 unsigned long statRx = 0, statTx = 0, statRelay = 0, statUpdated = 0;
+unsigned long statCrcFail = 0;
 
 // ==================== ОБЪЕКТЫ ====================
 HardwareSerial loraSerial(2);
@@ -246,6 +249,18 @@ void deserializeEntry(const uint8_t* buf, NodeEntry& e) {
   e.flags = buf[19];
 }
 
+uint16_t crc16Ccitt(const uint8_t* data, int len) {
+  uint16_t crc = 0xFFFF;
+  for (int i = 0; i < len; i++) {
+    crc ^= ((uint16_t)data[i] << 8);
+    for (uint8_t b = 0; b < 8; b++) {
+      if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+      else crc <<= 1;
+    }
+  }
+  return crc;
+}
+
 // ==================== ОТПРАВКА ТАБЛИЦЫ ====================
 
 bool isTimestampNewer(uint32_t incomingTs, uint32_t currentTs) {
@@ -275,7 +290,8 @@ void broadcastTable() {
   
   while (sent < count) {
     int batchSize = min(count - sent, (int)MAX_ENTRIES_PKT);
-    int pktLen = HEADER_SIZE + batchSize * ENTRY_SIZE;
+    int payloadLen = HEADER_SIZE + batchSize * ENTRY_SIZE;
+    int pktLen = payloadLen + CRC_SIZE;
     uint8_t pkt[E220_MAX_PKT];
     
     // Заголовок
@@ -295,11 +311,16 @@ void broadcastTable() {
       entryIdx = i + 1;
     }
     
+    // CRC
+    uint16_t crc = crc16Ccitt(pkt, payloadLen);
+    pkt[payloadLen] = (uint8_t)(crc >> 8);
+    pkt[payloadLen + 1] = (uint8_t)crc;
+
     // Отправка
     if (waitAux(300)) {
       loraSerial.write(pkt, pktLen);
       statTx++;
-      Serial.printf("[TX] seq:%d записей:%d размер:%dB\n", pktSeq, batchSize, pktLen);
+      Serial.printf("[TX] seq:%d записей:%d размер:%dB crc:%04X\n", pktSeq, batchSize, pktLen, crc);
       addDedup(NODE_ID, pktSeq);
     }
     
@@ -316,7 +337,17 @@ void broadcastTable() {
 // ==================== ПРИЁМ ====================
 
 void processReceived(uint8_t* buf, int len) {
-  if (len < HEADER_SIZE + ENTRY_SIZE) return;  // минимум заголовок + 1 запись
+  if (len < HEADER_SIZE + ENTRY_SIZE + CRC_SIZE) return;  // минимум заголовок + 1 запись + CRC
+
+  int dataLen = len;
+  int16_t rxRssi = 0;
+
+  // В режиме RSSI-byte E220 добавляет 1 байт в конец принятого пакета.
+  // Пробуем определить его по длине и не включать в CRC.
+  if (((len - CRC_SIZE - HEADER_SIZE) % ENTRY_SIZE) == 1) {
+    dataLen = len - 1;
+    rxRssi = -(int16_t)buf[len - 1];
+  }
   
   uint8_t sender = buf[0];
   uint8_t seq = buf[1];
@@ -325,7 +356,16 @@ void processReceived(uint8_t* buf, int len) {
   // Проверки
   if (sender == NODE_ID) return;   // свой пакет (эхо)
   if (entryCount == 0) return;
-  if (len < HEADER_SIZE + entryCount * ENTRY_SIZE) return;  // битый пакет
+  int expectedLen = HEADER_SIZE + entryCount * ENTRY_SIZE + CRC_SIZE;
+  if (dataLen != expectedLen) return;  // битый пакет
+
+  uint16_t rxCrc = ((uint16_t)buf[dataLen - 2] << 8) | buf[dataLen - 1];
+  uint16_t calcCrc = crc16Ccitt(buf, dataLen - CRC_SIZE);
+  if (rxCrc != calcCrc) {
+    statCrcFail++;
+    Serial.printf("[CRC] FAIL от:%d seq:%d rx:%04X calc:%04X len:%d\n", sender, seq, rxCrc, calcCrc, dataLen);
+    return;
+  }
   
   // Дедупликация
   if (isDuplicate(sender, seq)) return;
@@ -358,6 +398,7 @@ void processReceived(uint8_t* buf, int len) {
         existing->timestamp = incoming.timestamp;
         existing->flags = incoming.flags;
         existing->localRxTime = millis();
+        existing->lastRssi = rxRssi;
         updated++;
       }
     } else {
@@ -373,6 +414,7 @@ void processReceived(uint8_t* buf, int len) {
       slot->timestamp = incoming.timestamp;
       slot->flags = incoming.flags;
       slot->localRxTime = millis();
+      slot->lastRssi = rxRssi;
       updated++;
     }
   }
@@ -383,7 +425,7 @@ void processReceived(uint8_t* buf, int len) {
   // Ретрансляция: пересылаем как есть (данные не наши — передаём дальше)
   delay(random(RELAY_JITTER_MIN, RELAY_JITTER_MAX));
   if (waitAux(300)) {
-    loraSerial.write(buf, len);
+    loraSerial.write(buf, dataLen);
     statRelay++;
     Serial.printf("[RELAY] от:%d seq:%d\n", sender, seq);
   }
@@ -470,11 +512,11 @@ void trackerLoop() {
 
 void trackerDebug() {
   NodeEntry* me = findNode(NODE_ID);
-  Serial.printf("[INFO] GPS:%s sats:%d | Таблица:%d узлов | tx:%lu rx:%lu relay:%lu upd:%lu | PPS:%lu | up:%lus\n",
+  Serial.printf("[INFO] GPS:%s sats:%d | Таблица:%d узлов | tx:%lu rx:%lu relay:%lu upd:%lu crc_fail:%lu | PPS:%lu | up:%lus\n",
     gps.location.isValid() ? "FIX" : "---",
     gps.satellites.value(),
     countNodes(),
-    statTx, statRx, statRelay, statUpdated,
+    statTx, statRx, statRelay, statUpdated, statCrcFail,
     ppsCount,
     millis() / 1000);
   
@@ -487,11 +529,11 @@ void trackerDebug() {
   for (int i = 0; i < MAX_NODES; i++) {
     if (nodeTable[i].id == 0 || nodeTable[i].id == NODE_ID) continue;
     unsigned long age = (millis() - nodeTable[i].localRxTime) / 1000;
-    Serial.printf("  #%d: %.6f, %.6f %dm %dkm/h ts:%lu age:%lus%s\n",
+    Serial.printf("  #%d: %.6f, %.6f %dm %dkm/h ts:%lu age:%lus rssi:%ddBm%s\n",
       nodeTable[i].id,
       nodeTable[i].lat / 1e7, nodeTable[i].lon / 1e7,
       nodeTable[i].alt, nodeTable[i].speed,
-      nodeTable[i].timestamp, age,
+      nodeTable[i].timestamp, age, nodeTable[i].lastRssi,
       (nodeTable[i].flags & 1) ? " SOS!" : "");
   }
   
@@ -515,7 +557,8 @@ void handleApi() {
   json += ",\"free_heap\":" + String(ESP.getFreeHeap());
   json += ",\"stats\":{\"rx\":" + String(statRx);
   json += ",\"relay\":" + String(statRelay);
-  json += ",\"updated\":" + String(statUpdated) + "}";
+  json += ",\"updated\":" + String(statUpdated);
+  json += ",\"crc_fail\":" + String(statCrcFail) + "}";
   
   json += ",\"nodes\":[";
   bool first = true;
@@ -535,6 +578,7 @@ void handleApi() {
     json += ",\"hdop\":" + String(nodeTable[i].hdop / 10.0, 1);
     json += ",\"timestamp\":" + String(nodeTable[i].timestamp);
     json += ",\"flags\":" + String(nodeTable[i].flags);
+    json += ",\"rssi\":" + String(nodeTable[i].lastRssi);
     json += ",\"age\":" + String(age) + "}";
     first = false;
   }
@@ -583,18 +627,18 @@ void gatewayLoop() {
 }
 
 void gatewayDebug() {
-  Serial.printf("[INFO] Узлов: %d | rx:%lu relay:%lu upd:%lu | Heap:%lu | up:%lus\n",
-    countNodes(), statRx, statRelay, statUpdated,
+  Serial.printf("[INFO] Узлов: %d | rx:%lu relay:%lu upd:%lu crc_fail:%lu | Heap:%lu | up:%lus\n",
+    countNodes(), statRx, statRelay, statUpdated, statCrcFail,
     ESP.getFreeHeap(), millis() / 1000);
   
   for (int i = 0; i < MAX_NODES; i++) {
     if (nodeTable[i].id == 0) continue;
     unsigned long age = (millis() - nodeTable[i].localRxTime) / 1000;
-    Serial.printf("  #%d: %.6f, %.6f %dm %dkm/h bat:%d%% ts:%lu age:%lus%s\n",
+    Serial.printf("  #%d: %.6f, %.6f %dm %dkm/h bat:%d%% ts:%lu age:%lus rssi:%ddBm%s\n",
       nodeTable[i].id,
       nodeTable[i].lat / 1e7, nodeTable[i].lon / 1e7,
       nodeTable[i].alt, nodeTable[i].speed, nodeTable[i].battery,
-      nodeTable[i].timestamp, age,
+      nodeTable[i].timestamp, age, nodeTable[i].lastRssi,
       (nodeTable[i].flags & 1) ? " SOS!" : "");
   }
 }

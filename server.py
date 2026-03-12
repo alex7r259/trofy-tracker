@@ -75,6 +75,7 @@ class Database:
                 lat REAL DEFAULT 0, lon REAL DEFAULT 0, alt REAL DEFAULT 0,
                 speed INTEGER DEFAULT 0, heading INTEGER DEFAULT 0,
                 battery INTEGER DEFAULT 100, hdop REAL DEFAULT 99,
+                rssi INTEGER DEFAULT 0,
                 flags INTEGER DEFAULT 0, timestamp INTEGER DEFAULT 0,
                 updated_at TEXT
             );
@@ -106,6 +107,11 @@ class Database:
                 UNIQUE(dev_id, cp_id)
             );
         ''')
+
+        # Миграции для старой БД
+        cols = {r['name'] for r in self.fetchall('PRAGMA table_info(nodes)')}
+        if 'rssi' not in cols:
+            self.conn.execute('ALTER TABLE nodes ADD COLUMN rssi INTEGER DEFAULT 0')
         self.conn.commit()
         
         # Категории по умолчанию
@@ -118,15 +124,15 @@ class Database:
         log.info(f'DB: {self.path}')
         cui.ok(f'БД инициализирована: {self.path}')
     
-    def update_node(self, dev_id, lat, lon, alt, speed, heading, battery, hdop, flags):
+    def update_node(self, dev_id, lat, lon, alt, speed, heading, battery, hdop, rssi, flags):
         now = datetime.now(timezone.utc).isoformat()
         self.execute('''
-            INSERT INTO nodes (dev_id,lat,lon,alt,speed,heading,battery,hdop,flags,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO nodes (dev_id,lat,lon,alt,speed,heading,battery,hdop,rssi,flags,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(dev_id) DO UPDATE SET
-                lat=?,lon=?,alt=?,speed=?,heading=?,battery=?,hdop=?,flags=?,updated_at=?
-        ''', (dev_id,lat,lon,alt,speed,heading,battery,hdop,flags,now,
-              lat,lon,alt,speed,heading,battery,hdop,flags,now))
+                lat=?,lon=?,alt=?,speed=?,heading=?,battery=?,hdop=?,rssi=?,flags=?,updated_at=?
+        ''', (dev_id,lat,lon,alt,speed,heading,battery,hdop,rssi,flags,now,
+              lat,lon,alt,speed,heading,battery,hdop,rssi,flags,now))
     
     def add_track_point(self, dev_id, lat, lon, alt, speed):
         if lat == 0 and lon == 0:
@@ -198,7 +204,7 @@ class Database:
             result.append({
                 'id':r['dev_id'],'lat':r['lat'],'lon':r['lon'],'alt':r['alt'],
                 'speed':r['speed'],'heading':r['heading'],'battery':r['battery'],
-                'hdop':r['hdop'],'flags':r['flags'],'age':age_ms
+                'hdop':r['hdop'],'rssi':r['rssi'],'flags':r['flags'],'age':age_ms
             })
         return result
     
@@ -284,7 +290,7 @@ class GatewayPoller:
                         continue
                     self.db.update_node(did, n.get('lat',0), n.get('lon',0), n.get('alt',0),
                         n.get('speed',0), n.get('heading',0), n.get('battery',100),
-                        n.get('hdop',99), n.get('flags',0))
+                        n.get('hdop',99), n.get('rssi',0), n.get('flags',0))
                     self.db.add_track_point(did, n.get('lat',0), n.get('lon',0), n.get('alt',0), n.get('speed',0))
                     self.db.check_cp(did, n.get('lat',0), n.get('lon',0))
                 
