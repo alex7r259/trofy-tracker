@@ -38,6 +38,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import threading
 import struct
 import os
+import socket
 
 # Минимальный HTTP сервер без зависимостей (только stdlib)
 
@@ -468,7 +469,16 @@ class RequestHandler(SimpleHTTPRequestHandler):
         try:
             while True:
                 # Читаем и игнорируем входящие фреймы (ping/pong/close/данные)
-                hdr = self.rfile.read(2)
+                try:
+                    hdr = self.rfile.read(2)
+                except socket.timeout:
+                    # Таймаут — не ошибка: клиент мог просто молчать.
+                    # Отправляем ping, чтобы проверить, что соединение живо.
+                    try:
+                        sock.sendall(WS_HUB._encode_control_frame(0x9, b'keepalive'))
+                    except Exception:
+                        break
+                    continue
                 if not hdr or len(hdr) < 2:
                     break
                 b1, b2 = hdr[0], hdr[1]
