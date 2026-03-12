@@ -93,6 +93,21 @@ class WebSocketHub:
                 for c in dead:
                     self._clients.discard(c)
 
+    def ping_all(self):
+        frame = self._encode_control_frame(0x9, b'ping')  # ping frame
+        dead = []
+        with self._lock:
+            clients = list(self._clients)
+        for c in clients:
+            try:
+                c.sendall(frame)
+            except Exception:
+                dead.append(c)
+        if dead:
+            with self._lock:
+                for c in dead:
+                    self._clients.discard(c)
+
     @staticmethod
     def _encode_text_frame(payload: bytes) -> bytes:
         return WebSocketHub._encode_frame(0x1, payload)
@@ -358,6 +373,8 @@ class GatewayPoller:
                 self.db.commit()
                 WS_HUB.broadcast_json({'type': 'nodes', 'nodes': self.db.get_nodes(), 'poll_count': self.poll_count + 1})
                 self.poll_count += 1
+                if self.poll_count % 20 == 0:
+                    WS_HUB.ping_all()
                 self.connected = True
                 self.last_error = None
                 self.err_count = 0
