@@ -1,7 +1,8 @@
 /*
  * ═══════════════════════════════════════════════════════════
  *  TROPHY RAID — LoRa Mesh Tracker / Gateway v2
- *  Каждый узел хранит таблицу ВСЕХ узлов и передаёт её целиком
+ *  Каждый узел хранит таблицу ВСЕХ узлов.
+ *  Трекер передаёт компактный пакет: своя позиция + 3 случайных узла.
  * ═══════════════════════════════════════════════════════════
  *
  *  РЕЖИМ:
@@ -18,8 +19,8 @@
  * ═══════════════════════════════════════════════════════════
  *
  *  Каждый узел хранит таблицу всех известных узлов.
- *  При отправке шлёт:
- *    [Header 3B] + [Entry × N] (N = кол-во известных узлов)
+ *  Трекер при отправке шлёт:
+ *    [Header 3B] + [Entry × N] (N = 1..4: я + до 3 случайных узлов)
  *
  *  Header (3 байта):
  *    [SenderID:1] [SeqNum:1] [EntryCount:1]
@@ -277,60 +278,67 @@ void broadcastTable() {
     Serial.println("[TX] AUX занят");
     return;
   }
-  
-  // Собираем валидные записи
-  int count = 0;
-  for (int i = 0; i < MAX_NODES; i++) {
-    if (nodeTable[i].id != 0) count++;
-  }
-  if (count == 0) return;
-  
-  // Разбиваем на пакеты по MAX_ENTRIES_PKT записей
-  int sent = 0;
-  int entryIdx = 0;
-  
-  while (sent < count) {
-    int batchSize = min(count - sent, (int)MAX_ENTRIES_PKT);
-    int payloadLen = HEADER_SIZE + batchSize * ENTRY_SIZE;
-    int pktLen = payloadLen + CRC_SIZE;
-    uint8_t pkt[E220_MAX_PKT];
-    
-    // Заголовок
-    uint8_t pktSeq = mySeqNum++;
-    pkt[0] = NODE_ID;
-    pkt[1] = pktSeq;
-    pkt[2] = batchSize;
-    
-    // Записи
-    int pos = HEADER_SIZE;
-    int added = 0;
-    for (int i = entryIdx; i < MAX_NODES && added < batchSize; i++) {
-      if (nodeTable[i].id == 0) continue;
-      serializeEntry(nodeTable[i], pkt + pos);
-      pos += ENTRY_SIZE;
-      added++;
-      entryIdx = i + 1;
-    }
-    
-    // CRC
-    uint16_t crc = crc16Ccitt(pkt, payloadLen);
-    pkt[payloadLen] = (uint8_t)(crc >> 8);
-    pkt[payloadLen + 1] = (uint8_t)crc;
 
-    // Отправка
-    if (waitAux(300)) {
-      loraSerial.write(pkt, pktLen);
-      statTx++;
-      Serial.printf("[TX] seq:%d записей:%d размер:%dB crc:%04X\n", pktSeq, batchSize, pktLen, crc);
-      addDedup(NODE_ID, pktSeq);
+  // Трекер отправляет компактный пакет: Я + до 3 случайных узлов.
+  // Это снижает эфирную нагрузку по сравнению с полным снимком таблицы.
+  int selectedIdx[4];
+  int selectedCount = 0;
+
+  // 1) Обязательно добавляем себя (если запись есть)
+  for (int i = 0; i < MAX_NODES; i++) {
+    if (nodeTable[i].id == NODE_ID) {
+      selectedIdx[selectedCount++] = i;
+      break;
     }
-    
-    sent += batchSize;
-    
-    // Пауза между частями если несколько пакетов
-    if (sent < count) {
-      delay(random(100, 300));
-    }
+  }
+  if (selectedCount == 0) return;
+
+  // 2) Выбираем до 3 случайных других узлов
+  int otherIdx[MAX_NODES];
+  int otherCount = 0;
+  for (int i = 0; i < MAX_NODES; i++) {
+    if (nodeTable[i].id == 0 || nodeTable[i].id == NODE_ID) continue;
+    otherIdx[otherCount++] = i;
+  }
+
+  int extra = min(3, otherCount);
+  for (int i = 0; i < extra; i++) {
+    int j = random(i, otherCount);
+    int t = otherIdx[i];
+    otherIdx[i] = otherIdx[j];
+    otherIdx[j] = t;
+    selectedIdx[selectedCount++] = otherIdx[i];
+  }
+
+  int batchSize = min(selectedCount, (int)MAX_ENTRIES_PKT);
+  int payloadLen = HEADER_SIZE + batchSize * ENTRY_SIZE;
+  int pktLen = payloadLen + CRC_SIZE;
+  uint8_t pkt[E220_MAX_PKT];
+
+  // Заголовок
+  uint8_t pktSeq = mySeqNum++;
+  pkt[0] = NODE_ID;
+  pkt[1] = pktSeq;
+  pkt[2] = batchSize;
+
+  // Записи
+  int pos = HEADER_SIZE;
+  for (int i = 0; i < batchSize; i++) {
+    serializeEntry(nodeTable[selectedIdx[i]], pkt + pos);
+    pos += ENTRY_SIZE;
+  }
+
+  // CRC
+  uint16_t crc = crc16Ccitt(pkt, payloadLen);
+  pkt[payloadLen] = (uint8_t)(crc >> 8);
+  pkt[payloadLen + 1] = (uint8_t)crc;
+
+  // Отправка
+  if (waitAux(300)) {
+    loraSerial.write(pkt, pktLen);
+    statTx++;
+    Serial.printf("[TX] seq:%d записей:%d (я+%d) размер:%dB crc:%04X\n", pktSeq, batchSize, max(0, batchSize - 1), pktLen, crc);
+    addDedup(NODE_ID, pktSeq);
   }
   
 }
